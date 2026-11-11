@@ -1,0 +1,30 @@
+# Build outputs
+build/
+!generated/
+generated/*
+!generated/rexglue.cmake
+DerivedData/
+*.ipa
+Payload/
+libs/
+
+# Game files & large binaries (Users provide their own legal files)
+game/*
+/Devil May Cry 4 (USA, Europe) (En,Fr,De,Es,It)/
+!game/README.md
+!game/.gitkeep
+*.iso
+*.xex
+*.arc
+*.bin
+Documents/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+*.swp
+*.user
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]

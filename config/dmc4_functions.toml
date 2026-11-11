@@ -1,0 +1,15 @@
+[functions]
+# Indirect startup callback observed in the Windows boot trace.
+0x822DB088 = {}
+# Indirect entry point reached after GPU and audio initialization.
+0x8215A898 = {}
+# Indirect entry point reached when the guest starts submitting audio.
+0x82190578 = {}
+# Indirect guest entry point observed during the Windows boot test.
+0x82172CF8 = {}
+# Full startup callback, including the shared return and both dispatch paths.
+0x822D9BD0 = { size = 0xC8 }
+# Indirect call observed after controller initialization.
+0x82136FB8 = {}
+# Indirect guest call after the first graphics pipelines are created.
+0x82137060 = {}

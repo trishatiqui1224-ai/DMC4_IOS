@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "ios",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/build/ios",
+      "cacheVariables": {
+        "DMC4_DESKTOP_BOOT": "OFF",
+        "CMAKE_SYSTEM_NAME": "iOS",
+        "CMAKE_OSX_SYSROOT": "iphoneos",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "16.0"
+      }
+    },
+    {
+      "name": "ios-sim",
+      "inherits": "ios",
+      "binaryDir": "${sourceDir}/build/ios-sim",
+      "cacheVariables": {
+        "CMAKE_OSX_SYSROOT": "iphonesimulator"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ios",
+      "configurePreset": "ios",
+      "configuration": "Release"
+    },
+    {
+      "name": "ios-sim",
+      "configurePreset": "ios-sim",
+      "configuration": "Debug"
+    }
+  ]
+}

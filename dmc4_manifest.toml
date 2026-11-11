@@ -1,0 +1,9 @@
+[project]
+sdk_version = "0.10.1"
+name = "dmc4"
+game_root = "Devil May Cry 4 (USA, Europe) (En,Fr,De,Es,It)"
+
+[entrypoint]
+file_path = "Devil May Cry 4 (USA, Europe) (En,Fr,De,Es,It)/default.xex"
+out_directory_path = "build/recompiled"
+includes = ["config/dmc4_functions.toml"]

@@ -1,0 +1,103 @@
+name: Build iOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build (${{ matrix.preset }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: ios-sim
+            mvk_target: iossim
+            config: Debug
+            sdk: iphonesimulator
+          - preset: ios
+            mvk_target: ios
+            config: Release
+            sdk: iphoneos
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16+
+        run: |
+          selected=""
+          for app in /Applications/Xcode_16*.app /Applications/Xcode_17*.app; do
+            if [ -d "$app" ]; then
+              selected="$app"
+            fi
+          done
+          if [ -z "$selected" ] && [ -d "/Applications/Xcode.app" ]; then
+            selected="/Applications/Xcode.app"
+          fi
+          if [ -n "$selected" ]; then
+            sudo xcode-select -s "$selected/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Install build tools
+        run: brew install cmake ninja || true
+
+      - name: Cache ReXGlue iOS source & MoltenVK (${{ matrix.mvk_target }})
+        id: cache-rexglue
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/rexglue-source
+            build/moltenvk
+          key: rexglue-bd833a2-${{ matrix.mvk_target }}-${{ hashFiles('tools/ios/rexglue-ios.patch', 'tools/ios/prepare_rexglue.py') }}
+
+      - name: Prepare ReXGlue SDK & MoltenVK for iOS
+        run: |
+          python3 tools/ios/prepare_rexglue.py \
+            --build-moltenvk "${{ matrix.mvk_target }}"
+
+      - name: Check optional pre-generated DMC4 recompiled code
+        id: check-recomp
+        run: |
+          if [ -f "build/recompiled/sources.cmake" ]; then
+            echo "kind=full" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=launcher-runtime" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure CMake (${{ matrix.preset }})
+        run: |
+          cmake --preset "${{ matrix.preset }}" \
+            -DREXSDK_DIR="${{ github.workspace }}/build/rexglue-source"
+
+      - name: Build DMC4 (${{ matrix.preset }})
+        run: |
+          cmake --build "build/${{ matrix.preset }}" \
+            --config "${{ matrix.config }}" \
+            --target DMC4 \
+            -- \
+            -quiet \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package unsigned IPA (device only when bundle present)
+        if: matrix.sdk == 'iphoneos'
+        run: |
+          app_path="build/${{ matrix.preset }}/${{ matrix.config }}-iphoneos/DMC4.app"
+          if [ ! -d "$app_path" ]; then
+            echo "Expected app bundle not found at $app_path"
+            exit 1
+          fi
+          mkdir -p build/ipa/Payload
+          cp -R "$app_path" build/ipa/Payload/
+          (cd build/ipa && zip -qry DMC4-unsigned.ipa Payload)
+          ls -lh build/ipa/DMC4-unsigned.ipa
+
+      - name: Upload device IPA artifact
+        if: matrix.sdk == 'iphoneos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DMC4-ios-unsigned-${{ steps.check-recomp.outputs.kind }}
+          path: build/ipa/DMC4-unsigned.ipa

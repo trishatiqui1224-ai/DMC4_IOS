@@ -1,0 +1,1580 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c9dfc17..aa55b43 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -136,7 +136,7 @@ add_compile_options(
+     $<$<CONFIG:DEBUG>:-O0>
+     $<$<CONFIG:RELEASE>:-O3>
+     $<$<CONFIG:RELEASE>:-DNDEBUG>
+-    -fno-char8_t
++    $<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-fno-char8_t>
+ )
+ 
+ if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+@@ -171,6 +171,17 @@ elseif(UNIX AND NOT APPLE)
+         set(REX_PLATFORM "linux-${REX_TARGET_PROCESSOR}")
+     endif()
+     add_compile_definitions(REX_PLATFORM_LINUX=1)
++elseif(IOS)
++    if(CMAKE_OSX_SYSROOT MATCHES "iphonesimulator" OR REX_TARGET_PROCESSOR MATCHES "AMD64|x86_64")
++        set(REX_PLATFORM "ios-sim-${REX_TARGET_PROCESSOR}")
++    else()
++        set(REX_PLATFORM "ios-arm64")
++    endif()
++    add_compile_definitions(REX_PLATFORM_IOS=1 REX_PLATFORM_MAC=0)
++    if(REXGLUE_ENABLE_FIDELITYFX)
++        message(STATUS "FidelityFX is not supported on iOS; disabling REXGLUE_ENABLE_FIDELITYFX")
++        set(REXGLUE_ENABLE_FIDELITYFX OFF CACHE BOOL "" FORCE)
++    endif()
+ elseif(APPLE)
+     if(REX_TARGET_PROCESSOR MATCHES "AMD64|x86_64")
+         set(REX_PLATFORM "mac-amd64")
+@@ -179,7 +190,7 @@ elseif(APPLE)
+     else()
+         set(REX_PLATFORM "mac-${REX_TARGET_PROCESSOR}")
+     endif()
+-    add_compile_definitions(REX_PLATFORM_MAC=1)
++    add_compile_definitions(REX_PLATFORM_MAC=1 REX_PLATFORM_IOS=0)
+ else()
+     message(FATAL_ERROR "Unsupported platform. ReXGlue supports Windows, Linux, and macOS only.")
+ endif()
+@@ -263,9 +274,17 @@ add_subdirectory(src/input)
+ add_subdirectory(src/audio)
+ add_subdirectory(src/graphics)
+ add_subdirectory(src/system)
++if(IOS)
++    option(REXGLUE_BUILD_CODEGEN_TOOL "Build the rexcodegen library and rexglue CLI tool" OFF)
++else()
++    option(REXGLUE_BUILD_CODEGEN_TOOL "Build the rexcodegen library and rexglue CLI tool" ON)
++endif()
++
+ add_subdirectory(src/kernel)
+-add_subdirectory(src/codegen)
+-add_subdirectory(src/rexglue)
++if(REXGLUE_BUILD_CODEGEN_TOOL)
++    add_subdirectory(src/codegen)
++    add_subdirectory(src/rexglue)
++endif()
+ 
+ # Add tests subdirectory if tests are enabled
+ if(REXGLUE_BUILD_TESTS)
+diff --git a/cmake/rexglueConfig.cmake.in b/cmake/rexglueConfig.cmake.in
+index ff7f132..593c3b9 100644
+--- a/cmake/rexglueConfig.cmake.in
++++ b/cmake/rexglueConfig.cmake.in
+@@ -21,7 +21,7 @@ set(REXGLUE_USE_VULKAN @REXGLUE_USE_VULKAN@)
+ if(REXGLUE_USE_VULKAN)
+     find_dependency(VulkanHeaders CONFIG)
+     find_dependency(VulkanMemoryAllocator CONFIG)
+-    if(APPLE)
++    if(APPLE AND NOT IOS)
+         if(NOT TARGET rex::vulkan-loader)
+             add_library(rex::vulkan-loader SHARED IMPORTED)
+             set_target_properties(rex::vulkan-loader PROPERTIES
+diff --git a/cmake/rexglue_export_targets.cmake b/cmake/rexglue_export_targets.cmake
+index 2d40e1f..385418e 100644
+--- a/cmake/rexglue_export_targets.cmake
++++ b/cmake/rexglue_export_targets.cmake
+@@ -4,7 +4,9 @@ set_target_properties(rexui PROPERTIES EXPORT_NAME ui)
+ set_target_properties(rexinput PROPERTIES EXPORT_NAME input)
+ set_target_properties(rexaudio PROPERTIES EXPORT_NAME audio)
+ set_target_properties(rexruntime PROPERTIES EXPORT_NAME runtime)
+-set_target_properties(rexcodegen PROPERTIES EXPORT_NAME codegen)
++if(TARGET rexcodegen)
++    set_target_properties(rexcodegen PROPERTIES EXPORT_NAME codegen)
++endif()
+ 
+ set(REXGLUE_INSTALL_TARGETS
+     rexruntime
+diff --git a/cmake/rexglue_helpers.cmake b/cmake/rexglue_helpers.cmake
+index 41e6dce..0a35673 100644
+--- a/cmake/rexglue_helpers.cmake
++++ b/cmake/rexglue_helpers.cmake
+@@ -3,11 +3,15 @@
+ #
+ # Three helpers, each with a single responsibility:
+ #   rexglue_apply_target_settings(<target>)        - common compile/platform flags
+-#   rexglue_configure_target(<target>)             - host application
++#   rexglue_configure_target(<target> [NO_SDL_MAIN] [GPU_PLUGINS ...]) - host application
+ #   rexglue_configure_module_target(<target> ...)  - guest DLL module
+ #==========================================================
+ include_guard(GLOBAL)
+ 
++if(NOT DEFINED REXGLUE_SHARE_DIR AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../share/rexglue")
++    get_filename_component(REXGLUE_SHARE_DIR "${CMAKE_CURRENT_LIST_DIR}/../share/rexglue" ABSOLUTE)
++endif()
++
+ function(_rexglue_stage_macos_vulkan_runtime target_name)
+     if(TARGET Vulkan::Loader AND TARGET MoltenVK::MoltenVK)
+         set(_rexglue_vulkan_loader Vulkan::Loader)
+@@ -75,10 +79,13 @@ endfunction()
+ #     so this single copy handles them transitively.
+ #==========================================================
+ function(rexglue_configure_target target_name)
+-    cmake_parse_arguments(ARG "" "" "GPU_PLUGINS" ${ARGN})
++    cmake_parse_arguments(ARG "NO_SDL_MAIN" "" "GPU_PLUGINS" ${ARGN})
+ 
++    if(NOT ARG_NO_SDL_MAIN)
++        target_sources(${target_name} PRIVATE
++            ${REXGLUE_SHARE_DIR}/windowed_app_main_sdl.cpp)
++    endif()
+     target_sources(${target_name} PRIVATE
+-        ${REXGLUE_SHARE_DIR}/windowed_app_main_sdl.cpp
+         ${REXGLUE_SHARE_DIR}/rex_app.cpp)
+ 
+     target_compile_definitions(${target_name} PRIVATE
+@@ -89,6 +96,11 @@ function(rexglue_configure_target target_name)
+             INSTALL_RPATH "$ORIGIN"
+             BUILD_WITH_INSTALL_RPATH ON
+         )
++    elseif(IOS)
++        set_target_properties(${target_name} PROPERTIES
++            INSTALL_RPATH "@executable_path;@executable_path/Frameworks"
++            BUILD_WITH_INSTALL_RPATH ON
++        )
+     elseif(APPLE)
+         # macOS analogue of $ORIGIN: resolve @rpath dylibs (librexruntime,
+         # libTracyClient, ...) next to the executable. Pairs with the runtime
+@@ -109,7 +121,7 @@ function(rexglue_configure_target target_name)
+             COMMAND_EXPAND_LISTS
+             VERBATIM
+         )
+-    elseif(APPLE)
++    elseif(APPLE AND NOT IOS)
+         # macOS: $<TARGET_RUNTIME_DLLS> does not resolve imported dylibs, so
+         # stage the shared runtime libraries explicitly next to the executable
+         # (paired with the @executable_path rpath above). Everything else the
+@@ -117,12 +129,16 @@ function(rexglue_configure_target target_name)
+         # differ between an in-tree build and an installed SDK import.
+         foreach(_rexglue_runtime_lib rex::runtime rexruntime rex::TracyClient TracyClient)
+             if(TARGET ${_rexglue_runtime_lib})
+-                add_custom_command(TARGET ${target_name} POST_BUILD
+-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+-                        $<TARGET_FILE:${_rexglue_runtime_lib}>
+-                        $<TARGET_FILE_DIR:${target_name}>
+-                    VERBATIM
+-                )
++                get_target_property(_rexglue_runtime_type ${_rexglue_runtime_lib} TYPE)
++                if(NOT _rexglue_runtime_type STREQUAL "STATIC_LIBRARY")
++                    add_custom_command(TARGET ${target_name} POST_BUILD
++                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
++                            $<TARGET_FILE:${_rexglue_runtime_lib}>
++                            $<TARGET_FILE_DIR:${target_name}>
++                        VERBATIM
++                    )
++                endif()
++                unset(_rexglue_runtime_type)
+             endif()
+         endforeach()
+     endif()
+@@ -142,8 +158,8 @@ function(rexglue_configure_target target_name)
+         endforeach()
+     endif()
+ 
+-    # Stage requested GPU emulation plugins next to the executable. Plugins
+-    # are runtime-loaded (never linked), so TARGET_RUNTIME_DLLS misses them.
++    # Stage requested GPU emulation plugins next to the executable (or link them
++    # statically on iOS where dynamic plugin loading is restricted).
+     foreach(_plugin IN LISTS ARG_GPU_PLUGINS)
+         if(TARGET rexgpu-${_plugin})
+             # In-tree build: depend on it so it gets built.
+@@ -157,16 +173,31 @@ function(rexglue_configure_target target_name)
+                 "rexglue_configure_target: unknown GPU plugin '${_plugin}' "
+                 "(no target rexgpu-${_plugin} or rex::gpu-${_plugin})")
+         endif()
+-        add_custom_command(TARGET ${target_name} POST_BUILD
+-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+-                $<TARGET_FILE:${_plugin_target}>
+-                $<TARGET_FILE_DIR:${target_name}>
+-            VERBATIM
+-        )
++        get_target_property(_plugin_type ${_plugin_target} TYPE)
++        if(_plugin_type STREQUAL "STATIC_LIBRARY")
++            target_link_libraries(${target_name} PRIVATE ${_plugin_target})
++            if(APPLE)
++                # Ensure rex_gpu_create / rex_gpu_abi_version remain in the
++                # dynamic symbol table for dlsym(RTLD_DEFAULT, ...).
++                target_link_options(${target_name} PRIVATE
++                    "LINKER:-u,_rex_gpu_create"
++                    "LINKER:-u,_rex_gpu_abi_version"
++                    "LINKER:-export_dynamic"
++                )
++            endif()
++        else()
++            add_custom_command(TARGET ${target_name} POST_BUILD
++                COMMAND ${CMAKE_COMMAND} -E copy_if_different
++                    $<TARGET_FILE:${_plugin_target}>
++                    $<TARGET_FILE_DIR:${target_name}>
++                VERBATIM
++            )
++        endif()
++        unset(_plugin_type)
+         unset(_plugin_target)
+     endforeach()
+ 
+-    if(APPLE AND REXGLUE_USE_VULKAN)
++    if(APPLE AND NOT IOS AND REXGLUE_USE_VULKAN)
+         _rexglue_stage_macos_vulkan_runtime(${target_name})
+     endif()
+ endfunction()
+diff --git a/cmake/rexglue_install.cmake b/cmake/rexglue_install.cmake
+index a003313..6f13c24 100644
+--- a/cmake/rexglue_install.cmake
++++ b/cmake/rexglue_install.cmake
+@@ -11,11 +11,13 @@ install(TARGETS ${REXGLUE_INSTALL_TARGETS}
+ )
+ 
+ # A Debug codegen tool runs an order of magnitude slower, so only Release ships.
+-install(TARGETS rexglue
+-    EXPORT rexglueTargets
+-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+-    CONFIGURATIONS Release
+-)
++if(TARGET rexglue)
++    install(TARGETS rexglue
++        EXPORT rexglueTargets
++        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
++        CONFIGURATIONS Release
++    )
++endif()
+ 
+ if(REXGLUE_INSTALL_FIDELITYFX_TARGETS)
+     install(TARGETS ${REXGLUE_INSTALL_FIDELITYFX_TARGETS}
+@@ -96,7 +98,7 @@ if(REXGLUE_USE_D3D12)
+     )
+ endif()
+ 
+-if(APPLE AND REXGLUE_USE_VULKAN)
++if(APPLE AND NOT IOS AND REXGLUE_USE_VULKAN)
+     install(FILES "$<TARGET_FILE:Vulkan::Loader>"
+         DESTINATION ${CMAKE_INSTALL_LIBDIR}
+         CONFIGURATIONS Release
+diff --git a/include/rex/graphics/command_processor.h b/include/rex/graphics/command_processor.h
+index da8e432..f770363 100644
+--- a/include/rex/graphics/command_processor.h
++++ b/include/rex/graphics/command_processor.h
+@@ -238,6 +238,7 @@ class CommandProcessor {
+   std::atomic<bool> worker_running_;
+   system::object_ref<system::XHostThread> worker_thread_;
+ 
++  mutable std::mutex pending_fns_mutex_;
+   std::queue<std::function<void()>> pending_fns_;
+ 
+   // MicroEngine binary from PM4_ME_INIT
+diff --git a/include/rex/platform.h b/include/rex/platform.h
+index e90418d..eacb11c 100644
+--- a/include/rex/platform.h
++++ b/include/rex/platform.h
+@@ -28,7 +28,9 @@
+ #include <TargetConditionals.h>
+ #endif
+ 
+-#if defined(TARGET_OS_MAC) && TARGET_OS_MAC
++#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
++#define REX_PLATFORM_IOS 1
++#elif defined(TARGET_OS_MAC) && TARGET_OS_MAC
+ #define REX_PLATFORM_MAC 1
+ #elif defined(WIN32) || defined(_WIN32)
+ #define REX_PLATFORM_WIN32 1
+@@ -44,9 +46,13 @@
+ 
+ // Ensure all platform macros are always defined (0 when inactive)
+ // so they can be used in static_assert and regular expressions.
++#ifndef REX_PLATFORM_IOS
++#define REX_PLATFORM_IOS 0
++#endif
+ #ifndef REX_PLATFORM_MAC
+ #define REX_PLATFORM_MAC 0
+ #endif
++#define REX_PLATFORM_APPLE (REX_PLATFORM_MAC || REX_PLATFORM_IOS)
+ #ifndef REX_PLATFORM_WIN32
+ #define REX_PLATFORM_WIN32 0
+ #endif
+@@ -90,9 +96,9 @@
+ #include <x86intrin.h>
+ #endif  // REX_PLATFORM_WIN32
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ #include <libkern/OSByteOrder.h>
+-#endif  // REX_PLATFORM_MAC
++#endif  // REX_PLATFORM_APPLE
+ 
+ #include <bit>
+ #include <cstdint>
+diff --git a/include/rex/platform/dynlib.h b/include/rex/platform/dynlib.h
+index e3fc40d..91367d6 100644
+--- a/include/rex/platform/dynlib.h
++++ b/include/rex/platform/dynlib.h
+@@ -71,6 +71,12 @@ inline constexpr const char* kVulkanLoader = "libvulkan.1.dylib";
+ inline constexpr const char* kRenderDoc = "librenderdoc.dylib";
+ inline constexpr const char* kSpirvToolsSdkPath = "lib/libSPIRV-Tools-shared.dylib";
+ 
++#elif REX_PLATFORM_IOS
++
++inline constexpr const char* kVulkanLoader = "Frameworks/MoltenVK.framework/MoltenVK";
++inline constexpr const char* kRenderDoc = "";
++inline constexpr const char* kSpirvToolsSdkPath = "";
++
+ #else
+ #error No library names provided for the target platform.
+ #endif
+diff --git a/include/rex/string/numeric.h b/include/rex/string/numeric.h
+index 85994c7..b49e88b 100644
+--- a/include/rex/string/numeric.h
++++ b/include/rex/string/numeric.h
+@@ -26,7 +26,7 @@
+ #include <rex/string/utf8.h>
+ #include <rex/vec128.h>
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ #include <locale.h>
+ #endif
+ 
+@@ -114,7 +114,7 @@ inline T ifs(const std::string_view value, bool force_hex) {
+   return result;
+ }
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ template <typename T>
+ inline std::from_chars_result portable_float_from_chars(const char* first, const char* last,
+                                                         T& value) {
+@@ -189,7 +189,7 @@ inline T fpfs(const std::string_view value, bool force_hex) {
+     }
+     std::memcpy(&result, &pun, sizeof(PUN));
+   } else {
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+     auto [p, error] = portable_float_from_chars(range.data(), range.data() + range.size(), result);
+ #else
+     auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
+@@ -316,7 +316,7 @@ inline vec128_t from_string<vec128_t>(const std::string_view value, bool force_h
+         assert_always();
+         return vec128_t();
+       }
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       auto result = detail::portable_float_from_chars(p, end, v.f32[i]);
+ #else
+       auto result = std::from_chars(p, end, v.f32[i], std::chars_format::general);
+diff --git a/include/rex/system/xmemory.h b/include/rex/system/xmemory.h
+index 0c39a42..1b6d278 100644
+--- a/include/rex/system/xmemory.h
++++ b/include/rex/system/xmemory.h
+@@ -39,7 +39,7 @@ namespace rex::memory::detail {
+ ///   - macOS x86_64:    4KB granularity  -> no offset
+ ///   - Linux (any):     4KB granularity  -> no offset (mmap handles it natively)
+ constexpr u32 PhysicalHostOffset([[maybe_unused]] u32 guest_addr) noexcept {
+-#if REX_PLATFORM_WIN32 || (REX_PLATFORM_MAC && defined(__aarch64__))
++#if REX_PLATFORM_WIN32 || (REX_PLATFORM_APPLE && defined(__aarch64__))
+   return (guest_addr >= 0xE0000000u) ? 0x1000u : 0u;
+ #else
+   return 0u;
+@@ -558,7 +558,7 @@ class Memory {
+   bool HasAnyFunctionTable() const;
+ 
+  private:
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   int MapViewsMac();
+ #endif
+   int MapViews(uint8_t* mapping_base);
+diff --git a/include/rex/system/xthread.h b/include/rex/system/xthread.h
+index a72911e..0d25c4b 100644
+--- a/include/rex/system/xthread.h
++++ b/include/rex/system/xthread.h
+@@ -375,7 +375,7 @@ class XThread : public XObject {
+   uint32_t suspend_count();
+   X_STATUS Resume(uint32_t* out_suspend_count = nullptr);
+   X_STATUS Suspend(uint32_t* out_suspend_count = nullptr);
+-#if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#if REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+   // Increment suspend count and block until another thread resumes us.
+   uint32_t SelfSuspend();
+ #endif
+@@ -427,7 +427,7 @@ class XThread : public XObject {
+ 
+   int32_t priority_ = 0;
+ 
+-#if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#if REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+   std::mutex suspend_mutex_;
+   std::condition_variable suspend_cv_;
+ #endif
+diff --git a/include/rex/thread/fiber.h b/include/rex/thread/fiber.h
+index 352af67..97f554d 100644
+--- a/include/rex/thread/fiber.h
++++ b/include/rex/thread/fiber.h
+@@ -23,6 +23,8 @@
+ #include <ucontext.h>
+ #include <cstdint>
+ #include <vector>
++#elif REX_PLATFORM_IOS
++#include <cstdint>
+ #endif
+ 
+ namespace rex::thread {
+@@ -64,6 +66,8 @@ struct Fiber {
+   bool is_thread_fiber_ = false;
+ 
+   static void Trampoline();
++#elif REX_PLATFORM_IOS
++  bool is_thread_fiber_ = false;
+ #endif
+ };
+ 
+diff --git a/include/rex/ui/renderdoc_api.h b/include/rex/ui/renderdoc_api.h
+index 536f710..cf4edeb 100644
+--- a/include/rex/ui/renderdoc_api.h
++++ b/include/rex/ui/renderdoc_api.h
+@@ -14,7 +14,7 @@
+ 
+ #include <rex/platform/dynlib.h>
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ struct RENDERDOC_API_1_0_0;
+ #else
+ #include <renderdoc_app.h>
+diff --git a/include/rex/ui/vulkan/api.h b/include/rex/ui/vulkan/api.h
+index 246fe22..008b5cc 100644
+--- a/include/rex/ui/vulkan/api.h
++++ b/include/rex/ui/vulkan/api.h
+@@ -57,7 +57,7 @@
+ #endif
+ #endif
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ #ifndef VK_USE_PLATFORM_METAL_EXT
+ #define VK_USE_PLATFORM_METAL_EXT
+ #endif
+diff --git a/resources/templates/codegen/pch_h.inja b/resources/templates/codegen/pch_h.inja
+index 68274d2..6eb21c6 100644
+--- a/resources/templates/codegen/pch_h.inja
++++ b/resources/templates/codegen/pch_h.inja
+@@ -124,7 +124,7 @@ extern PPCFuncMapping PPCFuncMappings[];
+ // Memory Access
+ //=============================================================================
+ 
+-#if REX_PLATFORM_WIN32 || (REX_PLATFORM_MAC && REX_ARCH_ARM64)
++#if REX_PLATFORM_WIN32 || (REX_PLATFORM_APPLE && REX_ARCH_ARM64)
+ #define REX_PHYS_HOST_OFFSET(addr) (((u32)(addr) >= 0xE0000000u) ? 0x1000u : 0u)
+ #else
+ #define REX_PHYS_HOST_OFFSET(addr) 0u
+diff --git a/resources/templates/test/ppc_config_h.inja b/resources/templates/test/ppc_config_h.inja
+index 0c334f8..2307444 100644
+--- a/resources/templates/test/ppc_config_h.inja
++++ b/resources/templates/test/ppc_config_h.inja
+@@ -73,7 +73,7 @@
+ #endif
+ #endif
+ 
+-#if REX_PLATFORM_WIN32 || (REX_PLATFORM_MAC && REX_ARCH_ARM64)
++#if REX_PLATFORM_WIN32 || (REX_PLATFORM_APPLE && REX_ARCH_ARM64)
+ #define REX_PHYS_HOST_OFFSET(addr) (((u32)(addr) >= 0xE0000000u) ? 0x1000u : 0u)
+ #else
+ #define REX_PHYS_HOST_OFFSET(addr) 0u
+diff --git a/src/core/atomic_posix.cpp b/src/core/atomic_posix.cpp
+index 378aa4b..cc21f9d 100644
+--- a/src/core/atomic_posix.cpp
++++ b/src/core/atomic_posix.cpp
+@@ -1,7 +1,7 @@
+ #include <rex/platform.h>
+ #include <rex/thread/atomic.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ namespace rex::thread {
+ 
+diff --git a/src/core/clock_posix.cpp b/src/core/clock_posix.cpp
+index 00f2382..573ef86 100644
+--- a/src/core/clock_posix.cpp
++++ b/src/core/clock_posix.cpp
+@@ -10,7 +10,7 @@
+ #include <rex/chrono/clock.h>
+ #include <rex/platform.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <sys/time.h>
+ 
+diff --git a/src/core/dynlib_posix.cpp b/src/core/dynlib_posix.cpp
+index fcfd6c9..4ecfda3 100644
+--- a/src/core/dynlib_posix.cpp
++++ b/src/core/dynlib_posix.cpp
+@@ -1,7 +1,7 @@
+ #include <rex/platform.h>
+ #include <rex/platform/dynlib.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <dlfcn.h>
+ 
+diff --git a/src/core/exception_handler_posix.cpp b/src/core/exception_handler_posix.cpp
+index 8b1c76a..aa377ad 100644
+--- a/src/core/exception_handler_posix.cpp
++++ b/src/core/exception_handler_posix.cpp
+@@ -9,15 +9,18 @@
+  * @modified    Tom Clay & Rien Gupta, 2026 - Adapted for ReXGlue runtime (POSIX + macOS)
+  */
+ 
+-#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
++#if defined(__APPLE__)
++#include <TargetConditionals.h>
++#if !TARGET_OS_IPHONE && !defined(_XOPEN_SOURCE)
+ // Darwin hides the deprecated ucontext API unless an XSI feature level is
+ // requested before <ucontext.h> is included.
+ #define _XOPEN_SOURCE 700
+ #endif
++#endif
+ 
+ #include <rex/exception_handler.h>
+ 
+-#if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#if REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+ 
+ #include <signal.h>
+ 
+@@ -36,7 +39,7 @@ namespace rex::arch {
+ bool signal_handlers_installed_ = false;
+ struct sigaction original_sigill_handler_;
+ struct sigaction original_sigsegv_handler_;
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ struct sigaction original_sigbus_handler_;
+ #endif
+ 
+@@ -51,7 +54,7 @@ std::pair<ExceptionHandler::Handler, void*> handlers_[kMaxHandlerCount];
+ 
+ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+                                      void* signal_context) {
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   // Darwin's mcontext_t is already a pointer (__darwin_mcontext64*); copy it.
+   mcontext_t mcontext = reinterpret_cast<ucontext_t*>(signal_context)->uc_mcontext;
+ #else
+@@ -63,7 +66,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+   HostThreadContext thread_context;
+ 
+ #if REX_ARCH_AMD64
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   thread_context.rip = uint64_t(mcontext->__ss.__rip);
+   thread_context.eflags = uint32_t(mcontext->__ss.__rflags);
+   // TODO (Graine25): Double check this one for me
+@@ -110,8 +113,8 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+               sizeof(thread_context.xmm_registers));
+ #endif
+ #elif REX_ARCH_ARM64
+-#if REX_PLATFORM_MAC
+-  // macOS ARM64: mcontext_t is __darwin_mcontext64* (pointer, not value)
++#if REX_PLATFORM_APPLE
++  // macOS / iOS ARM64: mcontext_t is __darwin_mcontext64* (pointer, not value)
+   std::memcpy(thread_context.x, mcontext->__ss.__x, sizeof(mcontext->__ss.__x));
+ #if __DARWIN_OPAQUE_ARM_THREAD_STATE64
+   thread_context.x[29] = reinterpret_cast<uintptr_t>(mcontext->__ss.__opaque_fp);
+@@ -171,8 +174,8 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+       // On macOS, SIGBUS (KERN_PROTECTION_FAILURE) is raised for writes to
+       // read-protected pages — the same scenario that raises SIGSEGV on Linux.
+       // Fall through to treat it as an access violation.
+-#if !REX_PLATFORM_MAC
+-      // On non-Mac POSIX, SIGBUS is a bus error (misaligned access), not a
++#if !REX_PLATFORM_APPLE
++      // On non-Apple POSIX, SIGBUS is a bus error (misaligned access), not a
+       // protection fault — don't handle it here.
+       assert_unhandled_case(signal_number);
+       return;
+@@ -183,7 +186,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+ #if REX_ARCH_AMD64
+       // x86_pf_error_code::X86_PF_WRITE
+       constexpr uint64_t kX86PageFaultErrorCodeWrite = UINT64_C(1) << 1;
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       access_violation_operation = (uint64_t(mcontext->__es.__err) & kX86PageFaultErrorCodeWrite)
+                                        ? Exception::AccessViolationOperation::kWrite
+                                        : Exception::AccessViolationOperation::kRead;
+@@ -197,7 +200,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+       // Exception Level, 0b100101 without a change in the Exception Level),
+       // bit 6 is 0 for reading from a memory location, 1 for writing to a
+       // memory location.
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       {
+         uint32_t mac_esr = mcontext->__es.__esr;
+         if (((mac_esr >> 26) & 0b111110) == 0b100100) {
+@@ -264,7 +267,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+     if (handlers_[i].first(&ex, handlers_[i].second)) {
+       // Exception handled.
+ #if REX_ARCH_AMD64
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       mcontext->__ss.__rip = thread_context.rip;
+       mcontext->__ss.__rflags = thread_context.eflags;
+       uint32_t modified_register_index;
+@@ -356,7 +359,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+ #elif REX_ARCH_ARM64
+       uint32_t modified_register_index;
+       uint32_t modified_x_registers_remaining = ex.modified_x_registers();
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       while (rex::bit_scan_forward(modified_x_registers_remaining, &modified_register_index)) {
+         modified_x_registers_remaining &= ~(UINT32_C(1) << modified_register_index);
+         if (modified_register_index < 29) {
+@@ -412,7 +415,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+           mcontext.regs[modified_register_index] = thread_context.x[modified_register_index];
+         }
+       }
+-#endif  // REX_PLATFORM_MAC
++#endif  // REX_PLATFORM_APPLE
+ #endif  // REX_ARCH
+       return;
+     }
+@@ -433,7 +436,7 @@ void ExceptionHandler::Install(Handler fn, void* data) {
+     if (sigaction(SIGSEGV, &signal_handler, &original_sigsegv_handler_) != 0) {
+       assert_always("Failed to install new SIGSEGV handler");
+     }
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+     if (sigaction(SIGBUS, &signal_handler, &original_sigbus_handler_) != 0) {
+       assert_always("Failed to install new SIGBUS handler");
+     }
+@@ -478,7 +481,7 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
+       if (sigaction(SIGSEGV, &original_sigsegv_handler_, NULL) != 0) {
+         assert_always("Failed to restore original SIGSEGV handler");
+       }
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       if (sigaction(SIGBUS, &original_sigbus_handler_, NULL) != 0) {
+         assert_always("Failed to restore original SIGBUS handler");
+       }
+@@ -490,4 +493,4 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
+ 
+ }  // namespace rex::arch
+ 
+-#endif  // REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#endif  // REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+diff --git a/src/core/fiber_posix.cpp b/src/core/fiber_posix.cpp
+index 4fe1ca6..3078cfe 100644
+--- a/src/core/fiber_posix.cpp
++++ b/src/core/fiber_posix.cpp
+@@ -9,15 +9,56 @@
+  *              See LICENSE file in the project root for full license text.
+  */
+ 
+-#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
++#if defined(__APPLE__)
++#include <TargetConditionals.h>
++#if !TARGET_OS_IPHONE && !defined(_XOPEN_SOURCE)
+ // Darwin hides the deprecated ucontext API unless a POSIX/XSI feature level
+ // is requested before <ucontext.h> is included. fiber.h includes ucontext.h,
+ // so the feature macro must be set in this translation unit first.
+ #define _XOPEN_SOURCE 700
+ #endif
++#endif
+ 
+ #include <rex/platform.h>
+-#if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#if REX_PLATFORM_IOS
++
++#include <rex/thread/fiber.h>
++
++#include <cassert>
++#include <cstdlib>
++
++namespace rex::thread {
++
++thread_local Fiber* Fiber::tls_current_ = nullptr;
++
++Fiber* Fiber::ConvertCurrentThread() {
++  auto* f = new Fiber();
++  f->is_thread_fiber_ = true;
++  tls_current_ = f;
++  return f;
++}
++
++Fiber* Fiber::Create(size_t /*stack_size*/, void (*/*entry*/)(void*), void* /*arg*/) {
++  return nullptr;
++}
++
++void Fiber::SwitchTo(Fiber* /*target*/) {
++  assert(false && "Fiber switching via ucontext is unsupported on iOS");
++  std::abort();
++}
++
++void Fiber::Destroy() {
++  if (is_thread_fiber_) {
++    tls_current_ = nullptr;
++  } else {
++    assert(this != tls_current_ && "Destroy called on the currently running fiber");
++  }
++  delete this;
++}
++
++}  // namespace rex::thread
++
++#elif REX_PLATFORM_LINUX || REX_PLATFORM_MAC
+ 
+ #include <rex/thread/fiber.h>
+ 
+diff --git a/src/core/filesystem_posix.cpp b/src/core/filesystem_posix.cpp
+index ef5bdf4..1990bcf 100644
+--- a/src/core/filesystem_posix.cpp
++++ b/src/core/filesystem_posix.cpp
+@@ -104,6 +104,11 @@ std::filesystem::path GetExecutableFolder() {
+ }
+ 
+ std::filesystem::path GetUserFolder() {
++#if REX_PLATFORM_IOS
++  if (auto home = rex::platform::env::get("HOME")) {
++    return std::filesystem::path(*home) / "Documents";
++  }
++#endif
+   // get preferred data home
+   if (auto xdg = rex::platform::env::get("XDG_DATA_HOME")) {
+     return std::filesystem::path(*xdg);
+diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
+index b52bf39..7e73cc0 100644
+--- a/src/core/memory_posix.cpp
++++ b/src/core/memory_posix.cpp
+@@ -12,29 +12,35 @@
+ #include <cerrno>
+ #include <cstddef>
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ #include <fstream>
+ #include <functional>
+ #include <string>
++#include <vector>
+ 
+ #include <fcntl.h>
+ 
++#include <rex/logging.h>
++#include <rex/math.h>
++#include <rex/memory/utils.h>
++#include <rex/platform.h>
++#include <rex/string.h>
++
+ #if REX_PLATFORM_MAC
+ #include <mach/mach.h>
+ #include <mach/mach_vm.h>
+ #include <mach/vm_region.h>
+-#endif  // REX_PLATFORM_MAC
++#elif REX_PLATFORM_IOS
++#include <mach/mach.h>
++#include <mach/vm_map.h>
++#include <mach/vm_region.h>
++#endif  // REX_PLATFORM_MAC / REX_PLATFORM_IOS
+ 
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+-#include <rex/logging.h>
+-#include <rex/math.h>
+-#include <rex/memory/utils.h>
+-#include <rex/platform.h>
+-#include <rex/string.h>
+-
+ // macOS off_t is 64-bit with no *64 large-file variants; Linux keeps the
+ // explicit *64 forms for legacy 32-bit off_t distributions.
+ #if defined(__APPLE__)
+@@ -73,7 +79,7 @@ static std::string MakeShmName(const std::filesystem::path& path) {
+   if (name.empty() || name[0] != '/') {
+     name.insert(name.begin(), '/');
+   }
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   if (name.size() > 30) {
+     const std::size_t h = std::hash<std::string>{}(name);
+     char hash_buf[24];
+@@ -137,8 +143,8 @@ uint32_t ToPosixProtectFlags(PageAccess access) {
+ }
+ 
+ bool IsWritableExecutableMemorySupported() {
+-#if REX_PLATFORM_MAC
+-  // macOS enforces W^X on Apple Silicon. Shared file mappings cannot be both
++#if REX_PLATFORM_APPLE
++  // Apple Silicon / iOS enforce W^X. Shared file mappings cannot be both
+   // writable and executable. The code cache must use separate RW and RX views.
+   return false;
+ #else
+@@ -262,7 +268,7 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
+     // range uses mprotect to avoid clobbering the existing reservation. Do not
+     // widen sub-host-page requests here - higher-level guest heaps must reconcile
+     // all guest permissions sharing a host page first.
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   if (base_address != nullptr && allocation_type == AllocationType::kCommit) {
+     const size_t host_page = page_size();
+     const uintptr_t address = reinterpret_cast<uintptr_t>(base_address);
+@@ -277,10 +283,12 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
+ #endif
+ 
+   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
++#if REX_PLATFORM_APPLE
+ #if REX_PLATFORM_MAC
+   if (access == PageAccess::kExecuteReadWrite || access == PageAccess::kExecuteReadOnly) {
+     flags |= MAP_JIT;
+   }
++#endif
+   if (base_address) {
+     flags |= MAP_FIXED;
+   }
+@@ -343,7 +351,7 @@ bool Protect(void* base_address, size_t length, PageAccess access, PageAccess* o
+     *out_old_access = PageAccess::kNoAccess;
+   }
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   // mprotect doesn't report the previous protection. Query the Mach region
+   // before changing it so this matches VirtualProtect's out parameter.
+   if (out_old_access) {
+@@ -374,25 +382,36 @@ bool Protect(void* base_address, size_t length, PageAccess access, PageAccess* o
+ }
+ 
+ bool QueryProtect(void* base_address, size_t& length, PageAccess& access_out) {
++#if REX_PLATFORM_APPLE
+ #if REX_PLATFORM_MAC
+   mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(base_address);
+   mach_vm_size_t region_size = 0;
++#else
++  vm_address_t address = reinterpret_cast<vm_address_t>(base_address);
++  vm_size_t region_size = 0;
++#endif
+   vm_region_basic_info_data_64_t info;
+   mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+   mach_port_t object_name;
+ 
++#if REX_PLATFORM_MAC
+   kern_return_t kr =
+       mach_vm_region(mach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
+                      reinterpret_cast<vm_region_info_t>(&info), &info_count, &object_name);
++#else
++  kern_return_t kr =
++      vm_region_64(mach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
++                   reinterpret_cast<vm_region_info_t>(&info), &info_count, &object_name);
++#endif
+   if (kr != KERN_SUCCESS) {
+     return false;
+   }
+-  if (address > reinterpret_cast<mach_vm_address_t>(base_address)) {
++  if (address > reinterpret_cast<uintptr_t>(base_address)) {
+     return false;
+   }
+ 
+   length = static_cast<size_t>((address + region_size) -
+-                               reinterpret_cast<mach_vm_address_t>(base_address));
++                               reinterpret_cast<uintptr_t>(base_address));
+ 
+   if ((info.protection & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) ==
+       (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) {
+@@ -454,6 +473,27 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
+     return kFileMappingHandleInvalid;
+   }
+   return static_cast<FileMappingHandle>(ashmem_fd);
++#elif REX_PLATFORM_IOS
++  // iOS App Sandbox forbids POSIX shm_open; back the sparse arena using an
++  // immediately unlinked temporary file inside TMPDIR.
++  const char* tmp_dir = std::getenv("TMPDIR");
++  std::string tmp_template = (tmp_dir && tmp_dir[0]) ? tmp_dir : "/tmp";
++  if (tmp_template.back() != '/') {
++    tmp_template.push_back('/');
++  }
++  tmp_template += "rex_mem_XXXXXX";
++  std::vector<char> path_buf(tmp_template.begin(), tmp_template.end());
++  path_buf.push_back('\0');
++  int fd = mkstemp(path_buf.data());
++  if (fd < 0) {
++    return kFileMappingHandleInvalid;
++  }
++  unlink(path_buf.data());
++  if (rex_ftruncate64(fd, static_cast<off_t>(length)) != 0) {
++    close(fd);
++    return kFileMappingHandleInvalid;
++  }
++  return static_cast<FileMappingHandle>(fd);
+ #else
+   int oflag;
+   switch (access) {
+@@ -489,7 +529,7 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
+ 
+ void CloseFileMappingHandle(FileMappingHandle handle, const std::filesystem::path& path) {
+   close(static_cast<int>(handle));
+-#if !REX_PLATFORM_ANDROID
++#if !REX_PLATFORM_ANDROID && !REX_PLATFORM_IOS
+   auto full_path = MakeShmName(path);
+   shm_unlink(full_path.c_str());
+ #endif
+diff --git a/src/core/platform/console_posix.cpp b/src/core/platform/console_posix.cpp
+index 669842b..c389e04 100644
+--- a/src/core/platform/console_posix.cpp
++++ b/src/core/platform/console_posix.cpp
+@@ -12,7 +12,7 @@
+ #include <rex/platform.h>
+ #include <rex/platform/console.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <unistd.h>
+ 
+diff --git a/src/core/platform/env_posix.cpp b/src/core/platform/env_posix.cpp
+index fb794b2..f0d2423 100644
+--- a/src/core/platform/env_posix.cpp
++++ b/src/core/platform/env_posix.cpp
+@@ -12,7 +12,7 @@
+ #include <rex/platform.h>
+ #include <rex/platform/env.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <cstdlib>
+ #include <string>
+diff --git a/src/core/seh_posix.cpp b/src/core/seh_posix.cpp
+index 5e0a932..b35b607 100644
+--- a/src/core/seh_posix.cpp
++++ b/src/core/seh_posix.cpp
+@@ -9,7 +9,7 @@
+ #include <rex/platform.h>
+ #include <rex/platform/seh.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <signal.h>
+ #include <cstdlib>  // std::abort()
+diff --git a/src/core/socket_posix.cpp b/src/core/socket_posix.cpp
+index b4b885a..ac6f541 100644
+--- a/src/core/socket_posix.cpp
++++ b/src/core/socket_posix.cpp
+@@ -1,7 +1,7 @@
+ #include <rex/net/socket.h>
+ #include <rex/platform.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <sys/ioctl.h>
+ #include <unistd.h>
+diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
+index 9ac8d15..c02f9e3 100644
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -9,7 +9,7 @@
+ #include <rex/platform.h>
+ #include <rex/thread.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_APPLE, "This file is POSIX-only");
+ 
+ #include <signal.h>
+ 
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index da7ae1a..4b8fb92 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -96,7 +96,15 @@ if(REXGLUE_USE_D3D12)
+         ${REXGPU_XENOS_D3D12_SOURCES})
+ endif()
+ 
+-add_library(rexgpu-xenos SHARED ${REXGPU_XENOS_SOURCES})
++if(IOS)
++    set(_rexgpu_xenos_type STATIC)
++    set(_rexgpu_link_scope PUBLIC)
++else()
++    set(_rexgpu_xenos_type SHARED)
++    set(_rexgpu_link_scope PRIVATE)
++endif()
++
++add_library(rexgpu-xenos ${_rexgpu_xenos_type} ${REXGPU_XENOS_SOURCES})
+ add_library(rex::gpu-xenos ALIAS rexgpu-xenos)
+ 
+ set_target_properties(rexgpu-xenos PROPERTIES
+@@ -134,13 +142,13 @@ endif()
+ # Everything PRIVATE: the plugin has no consumers. Never link the OBJECT
+ # libraries (rexcore/rexui) here; rexruntime already contains those objects
+ # and relinking them would duplicate global state.
+-target_link_libraries(rexgpu-xenos PRIVATE
++target_link_libraries(rexgpu-xenos ${_rexgpu_link_scope}
+     rexruntime
+     xxHash::xxhash
+ )
+ 
+ if(REXGLUE_USE_VULKAN)
+-    target_link_libraries(rexgpu-xenos PRIVATE
++    target_link_libraries(rexgpu-xenos ${_rexgpu_link_scope}
+         Vulkan::Headers
+         glslang::SPIRV
+         GPUOpen::VulkanMemoryAllocator
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index a744375..efa6f5e 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -158,11 +158,18 @@ void CommandProcessor::InitializeShaderStorage(const std::filesystem::path& cach
+                                                uint32_t title_id, bool blocking) {}
+ 
+ void CommandProcessor::CallInThread(std::function<void()> fn) {
+-  if (pending_fns_.empty() && system::XThread::IsInThread(worker_thread_.get())) {
+-    fn();
+-  } else {
++  {
++    std::lock_guard<std::mutex> lock(pending_fns_mutex_);
++    if (pending_fns_.empty() && system::XThread::IsInThread(worker_thread_.get())) {
++      // Unlock before executing in case the callback queues additional work.
++      pending_fns_mutex_.unlock();
++      fn();
++      pending_fns_mutex_.lock();
++      return;
++    }
+     pending_fns_.push(std::move(fn));
+   }
++  write_ptr_index_event_->Set();
+ }
+ 
+ void CommandProcessor::ClearCaches() {}
+@@ -204,12 +211,24 @@ void CommandProcessor::WorkerThreadMain() {
+   }
+ 
+   while (worker_running_) {
+-    while (!pending_fns_.empty()) {
+-      auto fn = std::move(pending_fns_.front());
+-      pending_fns_.pop();
++    for (;;) {
++      std::function<void()> fn;
++      {
++        std::lock_guard<std::mutex> lock(pending_fns_mutex_);
++        if (pending_fns_.empty()) {
++          break;
++        }
++        fn = std::move(pending_fns_.front());
++        pending_fns_.pop();
++      }
+       fn();
+     }
+ 
++    auto has_pending_fns = [this]() {
++      std::lock_guard<std::mutex> lock(pending_fns_mutex_);
++      return !pending_fns_.empty();
++    };
++
+     uint32_t write_ptr_index = write_ptr_index_.load();
+     if (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index) {
+       SCOPE_profile_cpu_i("gpu", "rex::graphics::CommandProcessor::Stall");
+@@ -229,10 +248,10 @@ void CommandProcessor::WorkerThreadMain() {
+         rex::thread::MaybeYield();
+         loop_count++;
+         write_ptr_index = write_ptr_index_.load();
+-      } while (worker_running_ && pending_fns_.empty() &&
++      } while (worker_running_ && !has_pending_fns() &&
+                (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index));
+       ReturnFromWait();
+-      if (!worker_running_ || !pending_fns_.empty()) {
++      if (!worker_running_ || has_pending_fns()) {
+         continue;
+       }
+     }
+diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
+index 6e9ac8a..a44dd3c 100644
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -14,7 +14,7 @@
+ 
+ #include <cstring>
+ 
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ #include <sys/select.h>
+ #endif
+ 
+@@ -37,7 +37,7 @@
+ // NOTE: must be included last as it expects windows.h to already be included.
+ #define _WINSOCK_DEPRECATED_NO_WARNINGS  // inet_addr
+ #include <winsock2.h>                    // NOLINT(build/include_order)
+-#elif REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#elif REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+ #include <arpa/inet.h>
+ #include <netinet/in.h>
+ #include <netinet/ip.h>
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp b/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
+index 57fd161..2491357 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
+@@ -226,7 +226,7 @@ u32 NtSuspendThread_entry(u32 handle, mapped_u32 suspend_count_ptr) {
+     }
+ 
+     REXKRNL_TRACE("[NtSuspendThread] handle={:08X} thread={}", uint32_t(handle), thread->name());
+-#if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#if REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+     auto* current_thread = XThread::GetCurrentThread();
+     bool is_self_suspend = current_thread && current_thread == thread.get();
+     if (is_self_suspend) {
+diff --git a/src/system/CMakeLists.txt b/src/system/CMakeLists.txt
+index 05979a3..ce2fa85 100644
+--- a/src/system/CMakeLists.txt
++++ b/src/system/CMakeLists.txt
+@@ -48,7 +48,11 @@ set(REXSYSTEM_SOURCES
+     xex_module.cpp
+ )
+ 
+-add_library(rexruntime SHARED ${REXSYSTEM_SOURCES})
++if(IOS)
++    add_library(rexruntime STATIC ${REXSYSTEM_SOURCES})
++else()
++    add_library(rexruntime SHARED ${REXSYSTEM_SOURCES})
++endif()
+ add_library(rex::runtime ALIAS rexruntime)
+ add_library(rex::system ALIAS rexruntime)
+ add_library(rex::kernel ALIAS rexruntime)
+diff --git a/src/system/gpu_plugin_loader.cpp b/src/system/gpu_plugin_loader.cpp
+index 754fa13..8f05539 100644
+--- a/src/system/gpu_plugin_loader.cpp
++++ b/src/system/gpu_plugin_loader.cpp
+@@ -22,6 +22,10 @@
+ #include <rex/platform.h>
+ #include <rex/platform/dynlib.h>
+ 
++#if REX_PLATFORM_IOS
++#include <dlfcn.h>
++#endif
++
+ namespace rex::system {
+ 
+ namespace {
+@@ -38,7 +42,7 @@ std::string PluginFileName(std::string_view name) {
+   }
+ #if REX_PLATFORM_WIN32
+   return fmt::format("rexgpu-{}{}.dll", name, postfix);
+-#elif REX_PLATFORM_MAC
++#elif REX_PLATFORM_APPLE
+   return fmt::format("librexgpu-{}{}.dylib", name, postfix);
+ #else
+   return fmt::format("librexgpu-{}{}.so", name, postfix);
+@@ -55,7 +59,23 @@ std::vector<platform::DynamicLibrary>& LoadedPlugins() {
+ }  // namespace
+ 
+ std::unique_ptr<IGraphicsSystem> LoadGpuPlugin(std::string_view name, std::string_view backend) {
++#if REX_PLATFORM_IOS
++  if (auto static_abi = reinterpret_cast<GpuAbiVersionFn>(dlsym(RTLD_DEFAULT, kGpuAbiVersionSymbol)),
++      static_create = reinterpret_cast<GpuCreateFn>(dlsym(RTLD_DEFAULT, kGpuCreateSymbol));
++      static_abi && static_create && static_abi() == kGpuPluginAbiVersion) {
++    std::string backend_str(backend);
++    GpuCreateInfo info{};
++    info.struct_size = sizeof(GpuCreateInfo);
++    info.backend = backend_str.c_str();
++    if (IGraphicsSystem* gs = static_create(kGpuPluginAbiVersion, &info)) {
++      REXSYS_DEBUG("GPU plugin '{}' resolved from static symbols", name);
++      return std::unique_ptr<IGraphicsSystem>(gs);
++    }
++  }
++  auto path = rex::filesystem::GetExecutableFolder() / "Frameworks" / PluginFileName(name);
++#else
+   auto path = rex::filesystem::GetExecutableFolder() / PluginFileName(name);
++#endif
+   if (!std::filesystem::exists(path)) {
+     REXSYS_ERROR(
+         "GPU plugin '{}' not found at {}. Stage it next to the executable "
+diff --git a/src/system/runtime.cpp b/src/system/runtime.cpp
+index c10694c..1b5c08d 100644
+--- a/src/system/runtime.cpp
++++ b/src/system/runtime.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <rex/chrono/clock.h>
+ #include <rex/cvar.h>
++#include <rex/filesystem/devices/disc_image_device.h>
+ #include <rex/filesystem/devices/host_path_device.h>
+ #include <rex/filesystem/devices/null_device.h>
+ #include <rex/filesystem/vfs.h>
+@@ -303,16 +304,21 @@ bool Runtime::SetupVfs() {
+     return false;
+   }
+ 
+-  // Mount game_data_root as \Device\Harddisk0\Partition1
++  // Mount game_data_root as \Device\Harddisk0\Partition1 (disc image or folder)
+   auto mount_path = "\\Device\\Harddisk0\\Partition1";
+-  auto device = std::make_unique<rex::filesystem::HostPathDevice>(
+-      mount_path, abs_game_root, !REXCVAR_GET(allow_game_relative_writes));
++  std::unique_ptr<rex::filesystem::Device> device;
++  if (std::filesystem::is_regular_file(abs_game_root)) {
++    device = std::make_unique<rex::filesystem::DiscImageDevice>(mount_path, abs_game_root);
++  } else {
++    device = std::make_unique<rex::filesystem::HostPathDevice>(
++        mount_path, abs_game_root, !REXCVAR_GET(allow_game_relative_writes));
++  }
+   if (!device->Initialize()) {
+-    REXSYS_ERROR("Runtime::SetupVfs: Failed to initialize host path device");
++    REXSYS_ERROR("Runtime::SetupVfs: Failed to initialize game storage device");
+     return false;
+   }
+   if (!file_system_->RegisterDevice(std::move(device))) {
+-    REXSYS_ERROR("Runtime::SetupVfs: Failed to register host path device");
++    REXSYS_ERROR("Runtime::SetupVfs: Failed to register game storage device");
+     return false;
+   }
+   REXSYS_DEBUG("  Mounted {} at {}", abs_game_root.string(), mount_path);
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+index 76cc877..04f4e37 100644
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -13,7 +13,9 @@
+ #include <cstring>
+ #include <utility>
+ 
+-#if REX_PLATFORM_MAC
++#include <rex/platform.h>
++
++#if REX_PLATFORM_APPLE
+ #include <sys/mman.h>
+ #endif
+ 
+@@ -148,8 +150,8 @@ bool Memory::Initialize() {
+     return false;
+   }
+ 
+-#if REX_PLATFORM_MAC
+-  // On macOS, reserve a contiguous host range first, then carve guest views
++#if REX_PLATFORM_APPLE
++  // On Darwin, reserve a contiguous host range first, then carve guest views
+   // into it with MAP_SHARED|MAP_FIXED so all views share the same backing fd.
+   if (MapViewsMac()) {
+     REXSYS_ERROR("Unable to find a continuous block in the 64bit address space.");
+@@ -312,7 +314,7 @@ static const struct {
+         0x0000000100000000ull,
+     },
+ };
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ int Memory::MapViewsMac() {
+   assert_true(rex::countof(map_info) == rex::countof(views_.all_views));
+ 
+@@ -356,7 +358,7 @@ int Memory::MapViewsMac() {
+ 
+   return 0;
+ }
+-#endif  // REX_PLATFORM_MAC
++#endif  // REX_PLATFORM_APPLE
+ 
+ int Memory::MapViews(uint8_t* mapping_base) {
+   assert_true(rex::countof(map_info) == rex::countof(views_.all_views));
+diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
+index 77bce25..ca038ab 100644
+--- a/src/system/xthread.cpp
++++ b/src/system/xthread.cpp
+@@ -938,7 +938,7 @@ X_STATUS XThread::Resume(uint32_t* out_suspend_count) {
+     *out_suspend_count = previous_suspend_count;
+   }
+   return thread_->Resume(&unused_host_suspend_count) ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
+-#elif REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#elif REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+   bool should_resume_host = false;
+   {
+     std::lock_guard<std::mutex> lock(suspend_mutex_);
+@@ -986,7 +986,7 @@ X_STATUS XThread::Suspend(uint32_t* out_suspend_count) {
+   return thread_->Suspend(&unused_host_suspend_count) ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
+ }
+ 
+-#if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
++#if REX_PLATFORM_LINUX || REX_PLATFORM_APPLE
+ uint32_t XThread::SelfSuspend() {
+   auto guest_thread = guest_object<X_KTHREAD>();
+   std::unique_lock<std::mutex> lock(suspend_mutex_);
+diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
+index 5bd3dc5..0829e50 100644
+--- a/src/ui/CMakeLists.txt
++++ b/src/ui/CMakeLists.txt
+@@ -161,6 +161,21 @@ if(UNIX AND NOT APPLE)
+         ${X11_XCB_LIBRARIES}
+         ${WAYLAND_LIBRARIES}
+     )
++elseif(IOS)
++    target_link_libraries(rexui PRIVATE
++        "-framework CoreFoundation"
++        "-framework Foundation"
++        "-framework CoreGraphics"
++        "-framework QuartzCore"
++        "-framework UIKit"
++        "-framework Metal"
++        "-framework IOSurface"
++        "-framework GameController"
++        "-framework CoreAudio"
++        "-framework AudioToolbox"
++        "-framework AVFoundation"
++        "-framework CoreHaptics"
++    )
+ elseif(APPLE)
+     target_link_libraries(rexui PRIVATE "-framework CoreFoundation")
+ endif()
+diff --git a/src/ui/renderdoc_api.cpp b/src/ui/renderdoc_api.cpp
+index e1a5287..a5997d3 100644
+--- a/src/ui/renderdoc_api.cpp
++++ b/src/ui/renderdoc_api.cpp
+@@ -16,8 +16,8 @@ namespace rex {
+ namespace ui {
+ 
+ std::unique_ptr<RenderDocAPI> RenderDocAPI::CreateIfConnected() {
+-#if REX_PLATFORM_MAC
+-  // The vendored RenderDoc app API header doesn't expose a macOS path.
++#if REX_PLATFORM_APPLE
++  // The vendored RenderDoc app API header doesn't expose a Darwin path.
+   // Keep RenderDoc optional and simply report "not connected" on this platform.
+   return nullptr;
+ #else
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index 9ff54e8..90d1427 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -205,7 +205,8 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
+     rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, msg);
+     return false;
+   }
+-  if (!std::filesystem::is_directory(paths.game_data_root)) {
++  if (!std::filesystem::is_directory(paths.game_data_root) &&
++      !std::filesystem::is_regular_file(paths.game_data_root)) {
+     auto msg = fmt::format("--game_data_root does not exist: {}", paths.game_data_root.string());
+     REXLOG_ERROR("{}", msg);
+     rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, msg);
+@@ -260,8 +261,9 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
+   std::string xex_image = "game:\\default.xex";
+   OnLoadXexImage(xex_image);
+ 
+-  // Mirrors the game:\ / d:\ -> game_data_root mapping in Runtime::SetupVfs.
+-  {
++  // Mirrors the game:\ / d:\ -> game_data_root mapping in Runtime::SetupVfs
++  // when booting from an extracted directory (ISO images are verified on load).
++  if (std::filesystem::is_directory(paths.game_data_root)) {
+     constexpr std::string_view kGameDevice = "game:\\";
+     constexpr std::string_view kDDevice = "d:\\";
+     std::string_view tail = xex_image;
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 8197bb4..fbdfb67 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -31,12 +31,12 @@ REXCVAR_DEFINE_BOOL(vulkan_require_vertex_pipeline_stores_and_atomics, true, "UI
+                     "required for Vulkan GPU emulation")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ // Apple Silicon / MoltenVK does not expose geometryShader or fillModeNonSolid;
+-// default both to false on macOS so the device can still be selected.
+-REXCVAR_DEFINE_BOOL(vulkan_require_geometry_shader, !REX_PLATFORM_MAC, "UI/Vulkan",
++// default both to false on Apple platforms so the device can still be selected.
++REXCVAR_DEFINE_BOOL(vulkan_require_geometry_shader, !REX_PLATFORM_APPLE, "UI/Vulkan",
+                     "Require geometryShader support for Vulkan GPU emulation (disable to allow "
+                     "fallback primitive emulation paths)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+-REXCVAR_DEFINE_BOOL(vulkan_require_fill_mode_non_solid, !REX_PLATFORM_MAC, "UI/Vulkan",
++REXCVAR_DEFINE_BOOL(vulkan_require_fill_mode_non_solid, !REX_PLATFORM_APPLE, "UI/Vulkan",
+                     "Require fillModeNonSolid support for Vulkan GPU emulation (disable to "
+                     "allow fallback to solid fill for line/point polygon modes)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
+index 914b311..0114719 100644
+--- a/src/ui/vulkan/vulkan_instance.cpp
++++ b/src/ui/vulkan/vulkan_instance.cpp
+@@ -23,6 +23,9 @@
+ 
+ #if REX_PLATFORM_MAC
+ #include "vulkan_moltenvk.h"
++#elif REX_PLATFORM_IOS
++#include <dlfcn.h>
++#include <rex/filesystem.h>
+ #endif
+ 
+ REXCVAR_DEFINE_BOOL(vulkan_log_debug_messages, true, "UI/Vulkan", "Log Vulkan debug messages");
+@@ -45,6 +48,7 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+ 
+   bool functions_loaded = true;
+   bool loader_loaded = false;
++  bool use_process_symbols = false;
+ #if REX_PLATFORM_MAC
+   const MacOSVulkanRuntimePaths macos_runtime_paths = DetectMacOSVulkanRuntimePaths();
+   ConfigureMacOSVulkanEnvironment(macos_runtime_paths);
+@@ -74,6 +78,29 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+     }
+     return nullptr;
+   }
++#elif REX_PLATFORM_IOS
++  std::vector<std::filesystem::path> loader_candidates = {
++      rex::filesystem::GetExecutableFolder() / platform::lib_names::kVulkanLoader,
++      "Frameworks/MoltenVK.framework/MoltenVK",
++      "@rpath/MoltenVK.framework/MoltenVK",
++      "libMoltenVK.dylib",
++  };
++  for (const std::filesystem::path& candidate : loader_candidates) {
++    if (!candidate.empty() && vulkan_instance->loader_.Load(candidate)) {
++      loader_loaded = true;
++      REXLOG_INFO("Loaded MoltenVK runtime from {}", candidate.string());
++      break;
++    }
++  }
++  if (!loader_loaded && dlsym(RTLD_DEFAULT, "vkGetInstanceProcAddr")) {
++    loader_loaded = true;
++    use_process_symbols = true;
++    REXLOG_INFO("Using statically linked MoltenVK Vulkan symbols");
++  }
++  if (!loader_loaded) {
++    REXLOG_ERROR("Failed to load MoltenVK runtime on iOS");
++    return nullptr;
++  }
+ #else
+   loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
+   if (!loader_loaded) {
+@@ -82,8 +109,16 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+   }
+ #endif
+ 
++#if REX_PLATFORM_IOS
++#define XE_VULKAN_LOAD_LOADER_FUNCTION(name)                                                       \
++  functions_loaded &=                                                                              \
++      (ifn.name = use_process_symbols ? reinterpret_cast<PFN_##name>(dlsym(RTLD_DEFAULT, #name))   \
++                                      : vulkan_instance->loader_.GetSymbol<PFN_##name>(#name)) !=  \
++      nullptr;
++#else
+ #define XE_VULKAN_LOAD_LOADER_FUNCTION(name) \
+   functions_loaded &= (ifn.name = vulkan_instance->loader_.GetSymbol<PFN_##name>(#name)) != nullptr;
++#endif
+   XE_VULKAN_LOAD_LOADER_FUNCTION(vkGetInstanceProcAddr);
+   XE_VULKAN_LOAD_LOADER_FUNCTION(vkDestroyInstance);
+ #undef XE_VULKAN_LOAD_LOADER_FUNCTION
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+index 23645ef..80491b1 100644
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -42,7 +42,7 @@
+ #if REX_PLATFORM_WIN32
+ #include <rex/ui/surface_win.h>
+ #endif
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+ #include <rex/ui/surface_mac.h>
+ #endif
+ 
+@@ -441,7 +441,7 @@ Surface::TypeFlags VulkanPresenter::GetSurfaceTypesSupportedByInstance(
+     type_flags |= Surface::kTypeFlag_Win32Hwnd;
+   }
+ #endif
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   if (instance_extensions.ext_EXT_metal_surface) {
+     type_flags |= Surface::kTypeFlag_CAMetalLayer;
+   }
+@@ -846,7 +846,7 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+             instance, &surface_create_info, nullptr, &paint_context_.vulkan_surface);
+       } break;
+ #endif
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+       case Surface::kTypeIndex_CAMetalLayer: {
+         auto& metal_surface = static_cast<const CAMetalLayerSurface&>(new_surface);
+         VkMetalSurfaceCreateInfoEXT surface_create_info;
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 6782cce..c499420 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -29,8 +29,10 @@
+ 
+ #if REX_PLATFORM_WIN32
+ #include <rex/ui/surface_win.h>
+-#elif REX_PLATFORM_MAC
++#elif REX_PLATFORM_APPLE
++#if REX_PLATFORM_MAC
+ #include <CoreFoundation/CoreFoundation.h>
++#endif
+ #include <SDL3/SDL_metal.h>
+ 
+ #include <rex/ui/surface_mac.h>
+@@ -99,7 +101,7 @@ bool WindowSDL::OpenImpl() {
+   // SDL window coordinates are physical pixels on Windows and X11. Cocoa
+   // uses logical points and applies the backing scale itself.
+   SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   int initial_width = int(GetDesiredLogicalWidth());
+   int initial_height = int(GetDesiredLogicalHeight());
+ #else
+@@ -279,7 +281,7 @@ void WindowSDL::ApplyNewDesiredLogicalSize() {
+                        (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MINIMIZED))) {
+     return;
+   }
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_APPLE
+   SDL_SetWindowSize(sdl_window_, int(GetDesiredLogicalWidth()), int(GetDesiredLogicalHeight()));
+ #else
+   SDL_SetWindowSize(sdl_window_, int(SizeToPhysical(GetDesiredLogicalWidth())),
+@@ -436,7 +438,7 @@ std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl(Surface::TypeFlags allowed
+       return std::make_unique<Win32HwndSurface>(hinstance, hwnd);
+     }
+   }
+-#elif REX_PLATFORM_MAC
++#elif REX_PLATFORM_APPLE
+   if (allowed_types & Surface::kTypeFlag_CAMetalLayer) {
+     SDL_MetalView metal_view = SDL_Metal_CreateView(sdl_window_);
+     if (metal_view) {
+@@ -500,8 +502,8 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
+       // only (mirrors the Win32 WM_SIZE handling).
+       SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window_);
+       if (!(flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MINIMIZED))) {
+-#if REX_PLATFORM_MAC
+-        // Cocoa reports the client size in logical points. Converting it from
++#if REX_PLATFORM_APPLE
++        // Cocoa and UIKit report the client size in logical points. Converting it from
+         // the backing DPI a second time would halve the desired size on Retina
+         // displays.
+         OnDesiredLogicalSizeUpdate(uint32_t(event.window.data1), uint32_t(event.window.data2));
+diff --git a/src/ui/windowed_app_context_sdl.cpp b/src/ui/windowed_app_context_sdl.cpp
+index dc0b4c2..21eb663 100644
+--- a/src/ui/windowed_app_context_sdl.cpp
++++ b/src/ui/windowed_app_context_sdl.cpp
+@@ -46,6 +46,11 @@ bool SDLWindowedAppContext::Initialize() {
+   if (requested_driver.empty()) {
+     requested_driver = "cocoa";
+   }
++#elif REX_PLATFORM_IOS
++  // iOS presents via a CAMetalLayer surface obtained from the UIKit driver.
++  if (requested_driver.empty()) {
++    requested_driver = "uikit";
++  }
+ #endif
+   if (!requested_driver.empty()) {
+     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, requested_driver.c_str());
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index f102b56..b9cdd1d 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -49,7 +49,7 @@ if(REXGLUE_USE_VULKAN)
+         vulkan-headers vulkan-memory-allocator
+         spirv-headers spirv-tools glslang
+     )
+-    if(APPLE)
++    if(APPLE AND NOT IOS)
+         list(APPEND REQUIRED_SUBMODULES vulkan-loader moltenvk)
+     endif()
+ endif()
+@@ -201,7 +201,7 @@ if(REXGLUE_USE_VULKAN)
+     set(VMA_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
+     add_subdirectory(vulkan-memory-allocator)
+ 
+-    if(APPLE)
++    if(APPLE AND NOT IOS)
+         # Build the loader and MoltenVK revisions shipped by the pinned SDK.
+         # They remain runtime-loaded; no Vulkan implementation is linked into
+         # rexglue itself.
+@@ -248,7 +248,11 @@ set(SDL_INSTALL ON CACHE BOOL "" FORCE)
+ set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+ set(SDL_STATIC ON CACHE BOOL "" FORCE)
+ set(SDL_TEST OFF CACHE BOOL "" FORCE)
+-set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
++if(IOS)
++    set(SDL_UNIX_CONSOLE_BUILD OFF CACHE BOOL "" FORCE)
++else()
++    set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
++endif()
+ 
+ # Video provides the windowing/event layer; presenters create their own
+ # D3D12/Vulkan surfaces from native handles, so SDL_RENDER stays off.
