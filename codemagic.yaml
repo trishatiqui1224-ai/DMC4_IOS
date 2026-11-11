@@ -1,0 +1,231 @@
+##############################################################################
+# codemagic.yaml — DMC4 iOS  (Codemagic CI/CD)
+#
+# Workflows
+#   dmc4-ios-device  — Release build, arm64 / iphoneos   → unsigned IPA
+#   dmc4-ios-sim     — Debug build,   arm64 / iphonesimulator → .app zip
+#
+# Prerequisites (set in Codemagic → App → Environment variables)
+#   REXSDK_COMMIT   — rexglue commit hash (default bd833a2)
+#
+# No code-signing secrets are required for the unsigned / simulator builds.
+# To add App Store signing, populate the signing section with your team
+# identifier and add the cert/profile in Codemagic's Code Signing tab.
+##############################################################################
+
+definitions:
+  # ── Shared environment ──────────────────────────────────────────────────
+  common_env: &common_env
+    vars:
+      REXSDK_COMMIT: bd833a2
+      # Homebrew packages needed beyond what Codemagic pre-installs
+      BREW_EXTRAS: ninja
+
+  # ── Reusable install step ────────────────────────────────────────────────
+  install_tools: &install_tools
+    name: Install build tools
+    script: |
+      brew install $BREW_EXTRAS || true
+      cmake --version
+      ninja --version
+      python3 --version
+
+  # ── Select Xcode 16+ ────────────────────────────────────────────────────
+  select_xcode: &select_xcode
+    name: Select Xcode 16+
+    script: |
+      selected=""
+      for app in /Applications/Xcode_16*.app /Applications/Xcode_17*.app; do
+        [ -d "$app" ] && selected="$app"
+      done
+      [ -z "$selected" ] && [ -d /Applications/Xcode.app ] && selected=/Applications/Xcode.app
+      [ -n "$selected" ] && sudo xcode-select -s "$selected/Contents/Developer"
+      xcodebuild -version
+
+  # ── Prepare ReXGlue + MoltenVK ──────────────────────────────────────────
+  prepare_rexglue_ios: &prepare_rexglue_ios
+    name: Prepare ReXGlue SDK & MoltenVK (iphoneos)
+    script: |
+      python3 tools/ios/prepare_rexglue.py --build-moltenvk ios
+
+  prepare_rexglue_iossim: &prepare_rexglue_iossim
+    name: Prepare ReXGlue SDK & MoltenVK (iphonesimulator)
+    script: |
+      python3 tools/ios/prepare_rexglue.py --build-moltenvk iossim
+
+  # ── CMake configure + build helpers ─────────────────────────────────────
+  cmake_configure_ios: &cmake_configure_ios
+    name: Configure CMake (ios)
+    script: |
+      cmake --preset ios \
+        -DREXSDK_DIR="$CM_BUILD_DIR/build/rexglue-source"
+
+  cmake_build_ios: &cmake_build_ios
+    name: Build DMC4 (ios / Release)
+    script: |
+      cmake --build build/ios \
+        --config Release \
+        --target DMC4 \
+        -- \
+        -quiet \
+        CODE_SIGNING_ALLOWED=NO
+
+  cmake_configure_sim: &cmake_configure_sim
+    name: Configure CMake (ios-sim)
+    script: |
+      cmake --preset ios-sim \
+        -DREXSDK_DIR="$CM_BUILD_DIR/build/rexglue-source"
+
+  cmake_build_sim: &cmake_build_sim
+    name: Build DMC4 (ios-sim / Debug)
+    script: |
+      cmake --build build/ios-sim \
+        --config Debug \
+        --target DMC4 \
+        -- \
+        -quiet \
+        CODE_SIGNING_ALLOWED=NO
+
+  # ── Package unsigned IPA ─────────────────────────────────────────────────
+  package_ipa: &package_ipa
+    name: Package unsigned IPA
+    script: |
+      APP="build/ios/Release-iphoneos/DMC4.app"
+      if [ ! -d "$APP" ]; then
+        echo "ERROR: App bundle not found at $APP"
+        exit 1
+      fi
+      mkdir -p build/ipa/Payload
+      cp -R "$APP" build/ipa/Payload/
+      (cd build/ipa && zip -qry DMC4-unsigned.ipa Payload)
+      ls -lh build/ipa/DMC4-unsigned.ipa
+
+  # ── Package simulator .app zip ───────────────────────────────────────────
+  package_sim: &package_sim
+    name: Package simulator .app
+    script: |
+      APP="build/ios-sim/Debug-iphonesimulator/DMC4.app"
+      if [ ! -d "$APP" ]; then
+        echo "ERROR: App bundle not found at $APP"
+        exit 1
+      fi
+      mkdir -p build/sim-artifact
+      zip -qry build/sim-artifact/DMC4-iphonesimulator.zip "$APP"
+      ls -lh build/sim-artifact/DMC4-iphonesimulator.zip
+
+##############################################################################
+# Workflow: dmc4-ios-device
+##############################################################################
+workflows:
+  dmc4-ios-device:
+    name: DMC4 iOS — Device (unsigned IPA)
+    max_build_duration: 90
+    instance_type: mac_mini_m2    # Apple Silicon; fastest for Xcode + CMake
+    # ── Triggers ────────────────────────────────────────────────────────────
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: "ios/**"
+          include: true
+      cancel_previous_builds: true
+
+    environment:
+      <<: *common_env
+      # Code signing — leave blank for unsigned builds.
+      # Populate APPLE_TEAM_ID + add cert/profile in Codemagic UI to sign.
+      # xcode: latest
+      xcode: 16.2
+
+    cache:
+      cache_paths:
+        # Cache rexglue source + MoltenVK between runs
+        - build/rexglue-source
+        - build/moltenvk
+        # Homebrew cache
+        - /Users/builder/Library/Caches/Homebrew
+
+    scripts:
+      - *select_xcode
+      - *install_tools
+      - *prepare_rexglue_ios
+      # Detect optional pre-generated recompiled code
+      - name: Check recompiled sources
+        script: |
+          if [ -f build/recompiled/sources.cmake ]; then
+            echo "RECOMP_KIND=full" >> $CM_ENV
+          else
+            echo "RECOMP_KIND=launcher-runtime" >> $CM_ENV
+          fi
+      - *cmake_configure_ios
+      - *cmake_build_ios
+      - *package_ipa
+
+    artifacts:
+      - build/ipa/DMC4-unsigned.ipa
+
+    publishing:
+      email:
+        recipients:
+          - $CM_SUBMITTER_EMAIL
+        notify:
+          success: true
+          failure: true
+
+  ##############################################################################
+  # Workflow: dmc4-ios-sim
+  ##############################################################################
+  dmc4-ios-sim:
+    name: DMC4 iOS — Simulator (Debug)
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: "ios/**"
+          include: true
+      cancel_previous_builds: true
+
+    environment:
+      <<: *common_env
+      xcode: 16.2
+
+    cache:
+      cache_paths:
+        - build/rexglue-source
+        - build/moltenvk
+        - /Users/builder/Library/Caches/Homebrew
+
+    scripts:
+      - *select_xcode
+      - *install_tools
+      - *prepare_rexglue_iossim
+      - name: Check recompiled sources
+        script: |
+          if [ -f build/recompiled/sources.cmake ]; then
+            echo "RECOMP_KIND=full" >> $CM_ENV
+          else
+            echo "RECOMP_KIND=launcher-runtime" >> $CM_ENV
+          fi
+      - *cmake_configure_sim
+      - *cmake_build_sim
+      - *package_sim
+
+    artifacts:
+      - build/sim-artifact/DMC4-iphonesimulator.zip
+
+    publishing:
+      email:
+        recipients:
+          - $CM_SUBMITTER_EMAIL
+        notify:
+          success: true
+          failure: true
