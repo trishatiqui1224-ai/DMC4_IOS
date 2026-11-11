@@ -167,14 +167,6 @@ workflows:
     artifacts:
       - build/ipa/DMC4-unsigned.ipa
 
-    publishing:
-      email:
-        recipients:
-          - $CM_SUBMITTER_EMAIL
-        notify:
-          success: true
-          failure: true
-
   ##############################################################################
   # Workflow: dmc4-ios-sim
   ##############################################################################
@@ -222,10 +214,3 @@ workflows:
     artifacts:
       - build/sim-artifact/DMC4-iphonesimulator.zip
 
-    publishing:
-      email:
-        recipients:
-          - $CM_SUBMITTER_EMAIL
-        notify:
-          success: true
-          failure: true
