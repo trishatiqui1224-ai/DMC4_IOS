@@ -517,22 +517,20 @@ index fcfd6c9..4ecfda3 100644
  #include <dlfcn.h>
  
 diff --git a/src/core/exception_handler_posix.cpp b/src/core/exception_handler_posix.cpp
-index 8b1c76a..aa377ad 100644
+index 8b1c76a..5bf6c65 100644
 --- a/src/core/exception_handler_posix.cpp
 +++ b/src/core/exception_handler_posix.cpp
-@@ -9,15 +9,18 @@
+@@ -9,15 +9,13 @@
   * @modified    Tom Clay & Rien Gupta, 2026 - Adapted for ReXGlue runtime (POSIX + macOS)
   */
  
 -#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+-// Darwin hides the deprecated ucontext API unless an XSI feature level is
+-// requested before <ucontext.h> is included.
+-#define _XOPEN_SOURCE 700
 +#if defined(__APPLE__)
 +#include <TargetConditionals.h>
-+#if !TARGET_OS_IPHONE && !defined(_XOPEN_SOURCE)
- // Darwin hides the deprecated ucontext API unless an XSI feature level is
- // requested before <ucontext.h> is included.
- #define _XOPEN_SOURCE 700
  #endif
-+#endif
  
  #include <rex/exception_handler.h>
  
@@ -541,7 +539,21 @@ index 8b1c76a..aa377ad 100644
  
  #include <signal.h>
  
-@@ -36,7 +39,7 @@ namespace rex::arch {
+@@ -29,14 +27,21 @@
+ #include <rex/math.h>
+ #include <rex/platform.h>
+ 
++// <sys/ucontext.h> exposes ucontext_t / mcontext_t on all Darwin targets
++// (macOS + iOS) without the deprecated-API _XOPEN_SOURCE gate that iPhoneOS
++// SDK 18+ enforces when you include the top-level <ucontext.h> directly.
++#if REX_PLATFORM_APPLE
++#include <sys/ucontext.h>
++#else
+ #include <ucontext.h>
++#endif
+ 
+ namespace rex::arch {
+ 
  bool signal_handlers_installed_ = false;
  struct sigaction original_sigill_handler_;
  struct sigaction original_sigsegv_handler_;
@@ -550,7 +562,7 @@ index 8b1c76a..aa377ad 100644
  struct sigaction original_sigbus_handler_;
  #endif
  
-@@ -51,7 +54,7 @@ std::pair<ExceptionHandler::Handler, void*> handlers_[kMaxHandlerCount];
+@@ -51,7 +56,7 @@ std::pair<ExceptionHandler::Handler, void*> handlers_[kMaxHandlerCount];
  
  static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                                       void* signal_context) {
@@ -559,7 +571,7 @@ index 8b1c76a..aa377ad 100644
    // Darwin's mcontext_t is already a pointer (__darwin_mcontext64*); copy it.
    mcontext_t mcontext = reinterpret_cast<ucontext_t*>(signal_context)->uc_mcontext;
  #else
-@@ -63,7 +66,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -63,7 +68,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
    HostThreadContext thread_context;
  
  #if REX_ARCH_AMD64
@@ -568,7 +580,7 @@ index 8b1c76a..aa377ad 100644
    thread_context.rip = uint64_t(mcontext->__ss.__rip);
    thread_context.eflags = uint32_t(mcontext->__ss.__rflags);
    // TODO (Graine25): Double check this one for me
-@@ -110,8 +113,8 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -110,8 +115,8 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                sizeof(thread_context.xmm_registers));
  #endif
  #elif REX_ARCH_ARM64
@@ -579,7 +591,7 @@ index 8b1c76a..aa377ad 100644
    std::memcpy(thread_context.x, mcontext->__ss.__x, sizeof(mcontext->__ss.__x));
  #if __DARWIN_OPAQUE_ARM_THREAD_STATE64
    thread_context.x[29] = reinterpret_cast<uintptr_t>(mcontext->__ss.__opaque_fp);
-@@ -171,8 +174,8 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -171,8 +176,8 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
        // On macOS, SIGBUS (KERN_PROTECTION_FAILURE) is raised for writes to
        // read-protected pages — the same scenario that raises SIGSEGV on Linux.
        // Fall through to treat it as an access violation.
@@ -590,7 +602,7 @@ index 8b1c76a..aa377ad 100644
        // protection fault — don't handle it here.
        assert_unhandled_case(signal_number);
        return;
-@@ -183,7 +186,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -183,7 +188,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
  #if REX_ARCH_AMD64
        // x86_pf_error_code::X86_PF_WRITE
        constexpr uint64_t kX86PageFaultErrorCodeWrite = UINT64_C(1) << 1;
@@ -599,7 +611,7 @@ index 8b1c76a..aa377ad 100644
        access_violation_operation = (uint64_t(mcontext->__es.__err) & kX86PageFaultErrorCodeWrite)
                                         ? Exception::AccessViolationOperation::kWrite
                                         : Exception::AccessViolationOperation::kRead;
-@@ -197,7 +200,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -197,7 +202,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
        // Exception Level, 0b100101 without a change in the Exception Level),
        // bit 6 is 0 for reading from a memory location, 1 for writing to a
        // memory location.
@@ -608,7 +620,7 @@ index 8b1c76a..aa377ad 100644
        {
          uint32_t mac_esr = mcontext->__es.__esr;
          if (((mac_esr >> 26) & 0b111110) == 0b100100) {
-@@ -264,7 +267,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -264,7 +269,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
      if (handlers_[i].first(&ex, handlers_[i].second)) {
        // Exception handled.
  #if REX_ARCH_AMD64
@@ -617,7 +629,7 @@ index 8b1c76a..aa377ad 100644
        mcontext->__ss.__rip = thread_context.rip;
        mcontext->__ss.__rflags = thread_context.eflags;
        uint32_t modified_register_index;
-@@ -356,7 +359,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -356,7 +361,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
  #elif REX_ARCH_ARM64
        uint32_t modified_register_index;
        uint32_t modified_x_registers_remaining = ex.modified_x_registers();
@@ -626,7 +638,16 @@ index 8b1c76a..aa377ad 100644
        while (rex::bit_scan_forward(modified_x_registers_remaining, &modified_register_index)) {
          modified_x_registers_remaining &= ~(UINT32_C(1) << modified_register_index);
          if (modified_register_index < 29) {
-@@ -412,7 +415,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+@@ -382,7 +387,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+       mcontext->__ss.__sp = thread_context.sp;
+       mcontext->__ss.__pc = thread_context.pc;
+ #endif
+-      mcontext->__ss.__cpsr = thread_context.pstate;
++      mcontext->__ss.__cpsr = static_cast<uint32_t>(thread_context.pstate);
+       mcontext->__ns.__fpsr = thread_context.fpsr;
+       mcontext->__ns.__fpcr = thread_context.fpcr;
+       {
+@@ -412,7 +417,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
            mcontext.regs[modified_register_index] = thread_context.x[modified_register_index];
          }
        }
@@ -635,7 +656,7 @@ index 8b1c76a..aa377ad 100644
  #endif  // REX_ARCH
        return;
      }
-@@ -433,7 +436,7 @@ void ExceptionHandler::Install(Handler fn, void* data) {
+@@ -433,7 +438,7 @@ void ExceptionHandler::Install(Handler fn, void* data) {
      if (sigaction(SIGSEGV, &signal_handler, &original_sigsegv_handler_) != 0) {
        assert_always("Failed to install new SIGSEGV handler");
      }
@@ -644,7 +665,7 @@ index 8b1c76a..aa377ad 100644
      if (sigaction(SIGBUS, &signal_handler, &original_sigbus_handler_) != 0) {
        assert_always("Failed to install new SIGBUS handler");
      }
-@@ -478,7 +481,7 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
+@@ -478,7 +483,7 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
        if (sigaction(SIGSEGV, &original_sigsegv_handler_, NULL) != 0) {
          assert_always("Failed to restore original SIGSEGV handler");
        }
@@ -653,7 +674,7 @@ index 8b1c76a..aa377ad 100644
        if (sigaction(SIGBUS, &original_sigbus_handler_, NULL) != 0) {
          assert_always("Failed to restore original SIGBUS handler");
        }
-@@ -490,4 +493,4 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
+@@ -490,4 +495,4 @@ void ExceptionHandler::Uninstall(Handler fn, void* data) {
  
  }  // namespace rex::arch
  
