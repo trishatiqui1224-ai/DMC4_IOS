@@ -48,6 +48,17 @@ def init_submodules(rexglue_dir: Path) -> None:
         _git(rexglue_dir, "submodule", "update", "--init", "--recursive")
 
 
+def export_patch(rexglue_dir: Path, patch_path: Path) -> None:
+    """Write 'git diff --binary' as raw bytes so LF endings are preserved on all OSes."""
+    result = subprocess.run(
+        ["git", "-C", str(rexglue_dir), "diff", "--binary"],
+        capture_output=True,
+        check=True,
+    )
+    patch_path.write_bytes(result.stdout)
+    print(f"Exported iOS patch ({len(result.stdout):,} bytes) -> {patch_path}")
+
+
 def apply_patch(rexglue_dir: Path, patch_path: Path, verify_only: bool) -> None:
     if not patch_path.is_file():
         raise FileNotFoundError(f"Patch file not found: {patch_path}")
@@ -143,6 +154,11 @@ def main() -> int:
         help="Do not initialize git submodules inside --rexglue-dir",
     )
     parser.add_argument(
+        "--export-patch",
+        action="store_true",
+        help="Re-export the iOS patch from --rexglue-dir's current working-tree diff (raw bytes, LF-safe)",
+    )
+    parser.add_argument(
         "--verify-patch",
         action="store_true",
         help="Check whether the iOS patch applies (or is already applied) without modifying files",
@@ -176,6 +192,10 @@ def main() -> int:
 
     if not args.skip_submodules and not args.verify_patch:
         init_submodules(rexglue_dir)
+
+    if args.export_patch:
+        export_patch(rexglue_dir, patch_path)
+        return 0
 
     apply_patch(rexglue_dir, patch_path, verify_only=args.verify_patch)
 

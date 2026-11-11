@@ -1134,7 +1134,7 @@ index 05979a3..ce2fa85 100644
  add_library(rex::system ALIAS rexruntime)
  add_library(rex::kernel ALIAS rexruntime)
 diff --git a/src/system/gpu_plugin_loader.cpp b/src/system/gpu_plugin_loader.cpp
-index 754fa13..8f05539 100644
+index 754fa13..e12ae49 100644
 --- a/src/system/gpu_plugin_loader.cpp
 +++ b/src/system/gpu_plugin_loader.cpp
 @@ -22,6 +22,10 @@
@@ -1157,14 +1157,18 @@ index 754fa13..8f05539 100644
    return fmt::format("librexgpu-{}{}.dylib", name, postfix);
  #else
    return fmt::format("librexgpu-{}{}.so", name, postfix);
-@@ -55,7 +59,23 @@ std::vector<platform::DynamicLibrary>& LoadedPlugins() {
+@@ -55,7 +59,27 @@ std::vector<platform::DynamicLibrary>& LoadedPlugins() {
  }  // namespace
  
  std::unique_ptr<IGraphicsSystem> LoadGpuPlugin(std::string_view name, std::string_view backend) {
 +#if REX_PLATFORM_IOS
-+  if (auto static_abi = reinterpret_cast<GpuAbiVersionFn>(dlsym(RTLD_DEFAULT, kGpuAbiVersionSymbol)),
-+      static_create = reinterpret_cast<GpuCreateFn>(dlsym(RTLD_DEFAULT, kGpuCreateSymbol));
-+      static_abi && static_create && static_abi() == kGpuPluginAbiVersion) {
++  // Can't use auto for a comma-declaration of two different function-pointer
++  // types — clang rejects it.  Declare them separately via init-statement.
++  GpuAbiVersionFn static_abi =
++      reinterpret_cast<GpuAbiVersionFn>(dlsym(RTLD_DEFAULT, kGpuAbiVersionSymbol));
++  GpuCreateFn static_create =
++      reinterpret_cast<GpuCreateFn>(dlsym(RTLD_DEFAULT, kGpuCreateSymbol));
++  if (static_abi && static_create && static_abi() == kGpuPluginAbiVersion) {
 +    std::string backend_str(backend);
 +    GpuCreateInfo info{};
 +    info.struct_size = sizeof(GpuCreateInfo);
