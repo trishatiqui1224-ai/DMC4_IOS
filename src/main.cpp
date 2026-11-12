@@ -12,8 +12,10 @@
 #include <rex/audio/downmix.h>
 #include <rex/filesystem.h>
 #include <rex/graphics/vulkan/graphics_system.h>
+#include <rex/input/input_system.h>
 
 #include "dmc4_ios_runtime.h"
+#include "dmc4_touch_driver.h"
 #endif
 
 REXCVAR_DEFINE_BOOL(dmc4_no_shader_cache, false, "DMC4",
@@ -95,6 +97,22 @@ class Dmc4App final : public rex::ReXApp {
     if (!config.graphics) {
       config.graphics = std::make_unique<rex::graphics::vulkan::VulkanGraphicsSystem>();
     }
+
+    auto orig_input_factory = std::move(config.input_factory);
+    config.input_factory = [orig = std::move(orig_input_factory)](bool tool_mode) {
+      std::unique_ptr<rex::input::InputSystem> input;
+      if (orig) {
+        input = std::unique_ptr<rex::input::InputSystem>(
+            static_cast<rex::input::InputSystem*>(orig(tool_mode).release()));
+      } else {
+        input = rex::input::CreateDefaultInputSystem(tool_mode);
+      }
+      if (input) {
+        input->AddDriver(std::make_unique<dmc4::input::Dmc4TouchInputDriver>(nullptr, 0));
+        REXLOG_INFO("[DMC4 Input] Registered Dmc4TouchInputDriver for iOS on-screen controls");
+      }
+      return input;
+    };
   }
 #endif
 

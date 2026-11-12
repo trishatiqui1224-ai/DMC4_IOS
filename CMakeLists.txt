@@ -55,6 +55,8 @@ add_executable(DMC4 MACOSX_BUNDLE
     ios/Launcher.swift
     ios/GameFiles.swift
     ios/dmc4_ios_bridge.mm
+    ios/dmc4_touch_overlay.mm
+    ios/dmc4_touch_state.cpp
     ${app_assets}
 )
 
@@ -112,6 +114,8 @@ if(IOS)
         "-framework Foundation"
         "-framework GameController"
         "-framework CoreHaptics"
+        "-framework AudioToolbox"
+        "-framework QuartzCore"
     )
 endif()
 

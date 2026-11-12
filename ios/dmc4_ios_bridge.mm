@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 
 #include "dmc4_ios_bridge.h"
+#import "dmc4_touch_overlay.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -74,135 +75,36 @@ static void ConfigureLayerForProMotion(CALayer* layer, float targetFps) {
 }
 
 // -----------------------------------------------------------------------------
-// On-Screen Touch Virtual Controller Manager (iOS 15.0+)
+// ProMotion & Window Notification Observer
 // -----------------------------------------------------------------------------
 
-API_AVAILABLE(ios(15.0))
-@interface Dmc4VirtualControllerManager : NSObject
-@property (nonatomic, retain) GCVirtualController* virtualController;
-@property (nonatomic, assign) BOOL isEnabled;
-@property (nonatomic, assign) BOOL isConnected;
-@property (nonatomic, assign) float targetFrameRate;
+static float g_targetFrameRate = 60.0f;
 
-+ (instancetype)sharedInstance;
-- (void)start;
-- (void)stop;
-- (void)refresh;
-@end
-
-@implementation Dmc4VirtualControllerManager
-
-+ (instancetype)sharedInstance {
-  static Dmc4VirtualControllerManager* instance = nil;
+static void InstallProMotionWindowObserver() {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-    instance = [[Dmc4VirtualControllerManager alloc] init];
+    [[NSNotificationCenter defaultCenter]
+        addObserverForName:UIWindowDidBecomeKeyNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification* note) {
+                  dmc4_ios_request_landscape();
+                  if ([note.object isKindOfClass:[UIWindow class]]) {
+                    ConfigureLayerForProMotion(((UIWindow*)note.object).layer, g_targetFrameRate);
+                  }
+                }];
+    [[NSNotificationCenter defaultCenter]
+        addObserverForName:UIWindowDidBecomeVisibleNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification* note) {
+                  dmc4_ios_request_landscape();
+                  if ([note.object isKindOfClass:[UIWindow class]]) {
+                    ConfigureLayerForProMotion(((UIWindow*)note.object).layer, g_targetFrameRate);
+                  }
+                }];
   });
-  return instance;
 }
-
-- (instancetype)init {
-  self = [super init];
-  if (self) {
-    _isEnabled = NO;
-    _isConnected = NO;
-    _targetFrameRate = 60.0f;
-    [[NSNotificationCenter defaultCenter]
-        addObserver:self
-           selector:@selector(handleWindowNotification:)
-               name:UIWindowDidBecomeKeyNotification
-             object:nil];
-    [[NSNotificationCenter defaultCenter]
-        addObserver:self
-           selector:@selector(handleWindowNotification:)
-               name:UIWindowDidBecomeVisibleNotification
-             object:nil];
-  }
-  return self;
-}
-
-- (void)dealloc {
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
-  [_virtualController release];
-  [super dealloc];
-}
-
-- (void)handleWindowNotification:(NSNotification*)notification {
-  dmc4_ios_request_landscape();
-
-  if ([notification.object isKindOfClass:[UIWindow class]]) {
-    UIWindow* window = (UIWindow*)notification.object;
-    ConfigureLayerForProMotion(window.layer, self.targetFrameRate);
-  }
-
-  if (self.isEnabled && !self.isConnected) {
-    [self start];
-  }
-}
-
-- (void)start {
-  self.isEnabled = YES;
-  dmc4_ios_request_landscape();
-
-  if (@available(iOS 15.0, *)) {
-    if (self.isConnected && self.virtualController) {
-      return;
-    }
-    GCVirtualControllerConfiguration* config =
-        [[[GCVirtualControllerConfiguration alloc] init] autorelease];
-    config.elements = [NSSet setWithObjects:
-        GCInputLeftThumbstick,
-        GCInputRightThumbstick,
-        GCInputButtonA,
-        GCInputButtonB,
-        GCInputButtonX,
-        GCInputButtonY,
-        GCInputLeftShoulder,
-        GCInputRightShoulder,
-        GCInputLeftTrigger,
-        GCInputRightTrigger,
-        GCInputDirectionPad,
-        GCInputButtonMenu,
-        nil];
-
-    self.virtualController =
-        [GCVirtualController virtualControllerWithConfiguration:config];
-    [self.virtualController connectWithReplyHandler:^(NSError* _Nullable error) {
-      dispatch_async(dispatch_get_main_queue(), ^{
-        Dmc4VirtualControllerManager* manager = [Dmc4VirtualControllerManager sharedInstance];
-        if (error) {
-          NSLog(@"[DMC4 Touch] GCVirtualController connection failed: %@",
-                error.localizedDescription);
-          manager.isConnected = NO;
-        } else {
-          NSLog(@"[DMC4 Touch] GCVirtualController connected in landscape layout");
-          manager.isConnected = YES;
-        }
-      });
-    }];
-  }
-}
-
-- (void)stop {
-  self.isEnabled = NO;
-  if (@available(iOS 15.0, *)) {
-    if (self.virtualController) {
-      [self.virtualController disconnect];
-      self.virtualController = nil;
-      self.isConnected = NO;
-      NSLog(@"[DMC4 Touch] GCVirtualController disconnected");
-    }
-  }
-}
-
-- (void)refresh {
-  if (self.isEnabled) {
-    [self stop];
-    [self start];
-  }
-}
-
-@end
 
 // -----------------------------------------------------------------------------
 // C Bridge Functions for Touch Controls
@@ -211,15 +113,15 @@ API_AVAILABLE(ios(15.0))
 extern "C" void dmc4_ios_set_touch_controls_enabled(bool enabled) {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (enabled) {
-      [[Dmc4VirtualControllerManager sharedInstance] start];
+      [Dmc4TouchOverlayManager showOverlay];
     } else {
-      [[Dmc4VirtualControllerManager sharedInstance] stop];
+      [Dmc4TouchOverlayManager hideOverlay];
     }
   });
 }
 
 extern "C" bool dmc4_ios_is_virtual_controller_active(void) {
-  return [Dmc4VirtualControllerManager sharedInstance].isConnected;
+  return [Dmc4TouchOverlayManager isOverlayVisible];
 }
 
 // -----------------------------------------------------------------------------
@@ -327,7 +229,8 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
   options.debug_logging = config->debug_logging;
   options.msaa = config->msaa;
 
-  [Dmc4VirtualControllerManager sharedInstance].targetFrameRate = static_cast<float>(options.frame_rate);
+  g_targetFrameRate = static_cast<float>(options.frame_rate);
+  InstallProMotionWindowObserver();
 
   NSLog(@"[DMC4 Bridge] Launch requested: path=%s, scale=%d, fps=%d (ProMotion=%s), touch=%d, msaa=%d, debug_log=%d",
         options.game_path.c_str(), options.resolution_scale, options.frame_rate,
@@ -351,9 +254,7 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
 
   // Activate on-screen touch controls if requested
   if (options.touch_controls) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [[Dmc4VirtualControllerManager sharedInstance] start];
-    });
+    [Dmc4TouchOverlayManager showOverlay];
   }
 
   static std::once_flag init_once;
@@ -385,18 +286,14 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
   rex::ui::SDLWindowedAppContext app_context;
   if (!app_context.Initialize()) {
     WriteError(error_buf, error_buf_size, "Failed to initialize SDL3 UIKit video context.");
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [[Dmc4VirtualControllerManager sharedInstance] stop];
-    });
+    [Dmc4TouchOverlayManager hideOverlay];
     return false;
   }
 
   auto creator = rex::ui::GetWindowedAppCreator();
   if (!creator) {
     WriteError(error_buf, error_buf_size, "DMC4 ReXApp creator is not registered.");
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [[Dmc4VirtualControllerManager sharedInstance] stop];
-    });
+    [Dmc4TouchOverlayManager hideOverlay];
     return false;
   }
 
@@ -407,10 +304,12 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
     }
     WriteError(error_buf, error_buf_size,
                "Failed to initialize DMC4 runtime or Vulkan/MoltenVK presentation.");
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [[Dmc4VirtualControllerManager sharedInstance] stop];
-    });
+    [Dmc4TouchOverlayManager hideOverlay];
     return false;
+  }
+
+  if (options.touch_controls) {
+    [Dmc4TouchOverlayManager showOverlay];
   }
 
   NSLog(@"[DMC4 Bridge] Entering SDL3 main message loop in landscape mode...");
@@ -419,9 +318,7 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
 
   app->InvokeOnDestroy();
 
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [[Dmc4VirtualControllerManager sharedInstance] stop];
-  });
+  [Dmc4TouchOverlayManager hideOverlay];
 
   if (exit_code != 0) {
     WriteError(error_buf, error_buf_size, "DMC4 runtime exited with a non-zero status.");
