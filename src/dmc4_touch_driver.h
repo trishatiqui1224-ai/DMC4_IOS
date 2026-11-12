@@ -6,15 +6,16 @@
 #include <rex/input/device.h>
 #include <rex/input/input.h>
 #include <rex/input/input_driver.h>
+#include <rex/system/xtypes.h>
 
 #include "../ios/dmc4_touch_state.h"
 
-namespace dmc4::input {
+namespace rex::input {
 
-class Dmc4TouchInputDriver final : public rex::input::InputDriver {
+class Dmc4TouchInputDriver final : public InputDriver {
  public:
   explicit Dmc4TouchInputDriver(rex::ui::Window* window, size_t window_z_order)
-      : rex::input::InputDriver(window, window_z_order) {}
+      : InputDriver(window, window_z_order) {}
 
   ~Dmc4TouchInputDriver() override = default;
 
@@ -22,9 +23,9 @@ class Dmc4TouchInputDriver final : public rex::input::InputDriver {
     return X_STATUS_SUCCESS;
   }
 
-  void EnumerateDevices(std::vector<rex::input::DeviceInfo>& out) override {
-    rex::input::DeviceInfo info;
-    info.id = rex::input::DeviceId(9001);
+  void EnumerateDevices(std::vector<DeviceInfo>& out) override {
+    DeviceInfo info;
+    info.id = DeviceId(9001);
     info.ordinal = 0;
     info.name = "DMC4 iOS Touch Screen Controller";
     info.guid = "dmc4_touch_screen";
@@ -33,7 +34,7 @@ class Dmc4TouchInputDriver final : public rex::input::InputDriver {
     out.push_back(info);
   }
 
-  X_RESULT GetDeviceState(rex::input::DeviceId id, rex::input::X_INPUT_STATE* out_state) override {
+  X_RESULT GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) override {
     (void)id;
     if (!out_state) return X_ERROR_BAD_ARGUMENTS;
 
@@ -50,8 +51,8 @@ class Dmc4TouchInputDriver final : public rex::input::InputDriver {
     return X_ERROR_SUCCESS;
   }
 
-  X_RESULT GetDeviceCapabilities(rex::input::DeviceId id, uint32_t flags,
-                                 rex::input::X_INPUT_CAPABILITIES* out_caps) override {
+  X_RESULT GetDeviceCapabilities(DeviceId id, uint32_t flags,
+                                 X_INPUT_CAPABILITIES* out_caps) override {
     (void)id;
     (void)flags;
     if (!out_caps) return X_ERROR_BAD_ARGUMENTS;
@@ -69,7 +70,7 @@ class Dmc4TouchInputDriver final : public rex::input::InputDriver {
     return X_ERROR_SUCCESS;
   }
 
-  X_RESULT SetDeviceVibration(rex::input::DeviceId id, rex::input::X_INPUT_VIBRATION* vibration) override {
+  X_RESULT SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibration) override {
     (void)id;
     if (vibration) {
       if (vibration->left_motor_speed > 30000 || vibration->right_motor_speed > 30000) {
@@ -83,8 +84,8 @@ class Dmc4TouchInputDriver final : public rex::input::InputDriver {
     return X_ERROR_SUCCESS;
   }
 
-  X_RESULT GetDeviceKeystroke(rex::input::DeviceId id, uint32_t flags,
-                              rex::input::X_INPUT_KEYSTROKE* out_keystroke) override {
+  X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                              X_INPUT_KEYSTROKE* out_keystroke) override {
     (void)id;
     (void)flags;
     (void)out_keystroke;
@@ -92,5 +93,8 @@ class Dmc4TouchInputDriver final : public rex::input::InputDriver {
   }
 };
 
-}  // namespace dmc4::input
+}  // namespace rex::input
 
+namespace dmc4::input {
+using Dmc4TouchInputDriver = rex::input::Dmc4TouchInputDriver;
+}
