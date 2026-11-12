@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <GameController/GameController.h>
+#import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 
 #include "dmc4_ios_bridge.h"
@@ -16,6 +17,7 @@
 
 #if DMC4_IOS_HAS_RUNTIME
 #define SDL_MAIN_HANDLED
+#include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_main.h>
 
 #include <mutex>
@@ -30,6 +32,52 @@
 #endif
 
 // -----------------------------------------------------------------------------
+// Landscape Orientation Enforcement Helper
+// -----------------------------------------------------------------------------
+
+extern "C" void dmc4_ios_request_landscape(void) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (@available(iOS 16.0, *)) {
+      for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+          UIWindowScene* windowScene = (UIWindowScene*)scene;
+          UIWindowSceneGeometryPreferencesIOS* prefs =
+              [[UIWindowSceneGeometryPreferencesIOS alloc]
+                  initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape];
+          [windowScene requestGeometryUpdateWithPreferences:prefs errorHandler:^(NSError* err) {
+            if (err) {
+              NSLog(@"[DMC4 Orientation] Landscape geometry update: %@", err.localizedDescription);
+            }
+          }];
+        }
+      }
+    }
+  });
+}
+
+// -----------------------------------------------------------------------------
+// ProMotion & Layer Optimization Helpers
+// -----------------------------------------------------------------------------
+
+static void ConfigureLayerForProMotion(CALayer* layer, float targetFps) {
+  if (!layer) return;
+  if ([layer isKindOfClass:[CAMetalLayer class]]) {
+    CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
+    metalLayer.maximumDrawableCount = 3;  // Triple-buffering to eliminate stutter
+    if (@available(iOS 15.0, *)) {
+      float minFps = (targetFps > 60.0f) ? 60.0f : 30.0f;
+      float maxFps = (targetFps >= 120.0f) ? 120.0f : targetFps;
+      metalLayer.preferredFrameRateRange = CAFrameRateRangeMake(minFps, maxFps, maxFps);
+      NSLog(@"[DMC4 ProMotion] Configured CAMetalLayer: %.0f-%.0f Hz (preferred: %.0f Hz)",
+            minFps, maxFps, maxFps);
+    }
+  }
+  for (CALayer* sublayer in layer.sublayers) {
+    ConfigureLayerForProMotion(sublayer, targetFps);
+  }
+}
+
+// -----------------------------------------------------------------------------
 // On-Screen Touch Virtual Controller Manager (iOS 15.0+)
 // -----------------------------------------------------------------------------
 
@@ -38,6 +86,7 @@ API_AVAILABLE(ios(15.0))
 @property (nonatomic, strong) GCVirtualController* virtualController;
 @property (nonatomic, assign) BOOL isEnabled;
 @property (nonatomic, assign) BOOL isConnected;
+@property (nonatomic, assign) float targetFrameRate;
 
 + (instancetype)sharedInstance;
 - (void)start;
@@ -61,10 +110,16 @@ API_AVAILABLE(ios(15.0))
   if (self) {
     _isEnabled = NO;
     _isConnected = NO;
+    _targetFrameRate = 60.0f;
     [[NSNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(handleWindowNotification:)
                name:UIWindowDidBecomeKeyNotification
+             object:nil];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(handleWindowNotification:)
+               name:UIWindowDidBecomeVisibleNotification
              object:nil];
   }
   return self;
@@ -75,6 +130,13 @@ API_AVAILABLE(ios(15.0))
 }
 
 - (void)handleWindowNotification:(NSNotification*)notification {
+  dmc4_ios_request_landscape();
+
+  if ([notification.object isKindOfClass:[UIWindow class]]) {
+    UIWindow* window = (UIWindow*)notification.object;
+    ConfigureLayerForProMotion(window.layer, self.targetFrameRate);
+  }
+
   if (self.isEnabled && !self.isConnected) {
     [self start];
   }
@@ -82,6 +144,8 @@ API_AVAILABLE(ios(15.0))
 
 - (void)start {
   self.isEnabled = YES;
+  dmc4_ios_request_landscape();
+
   if (@available(iOS 15.0, *)) {
     if (self.isConnected && self.virtualController) {
       return;
@@ -115,7 +179,7 @@ API_AVAILABLE(ios(15.0))
                 error.localizedDescription);
           strongSelf.isConnected = NO;
         } else {
-          NSLog(@"[DMC4 Touch] GCVirtualController connected successfully with full layout (dual sticks, triggers, bumpers, d-pad, A/B/X/Y)");
+          NSLog(@"[DMC4 Touch] GCVirtualController connected in landscape layout");
           strongSelf.isConnected = YES;
         }
       });
@@ -244,6 +308,9 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
     return false;
   }
 
+  // Force landscape orientation on iOS device
+  dmc4_ios_request_landscape();
+
   dmc4::ios::RuntimeLaunchOptions options;
   options.game_path = config->game_path;
   if (config->user_data_dir) {
@@ -262,10 +329,14 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
   options.touch_controls = config->touch_controls;
   options.controller_vibration = config->controller_vibration;
   options.debug_logging = config->debug_logging;
+  options.msaa = config->msaa;
 
-  NSLog(@"[DMC4 Bridge] Launch requested: path=%s, scale=%d, fps=%d, touch=%d, debug_log=%d",
+  [Dmc4VirtualControllerManager sharedInstance].targetFrameRate = static_cast<float>(options.frame_rate);
+
+  NSLog(@"[DMC4 Bridge] Launch requested: path=%s, scale=%d, fps=%d (ProMotion=%s), touch=%d, msaa=%d, debug_log=%d",
         options.game_path.c_str(), options.resolution_scale, options.frame_rate,
-        options.touch_controls ? 1 : 0, options.debug_logging ? 1 : 0);
+        (options.frame_rate >= 120 ? "YES" : "NO"),
+        options.touch_controls ? 1 : 0, options.msaa ? 1 : 0, options.debug_logging ? 1 : 0);
 
   std::error_code ec;
   if (!options.user_data_dir.empty()) {
@@ -293,6 +364,22 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
   std::call_once(init_once, []() {
     char arg0[] = "DMC4";
     char* argv[] = {arg0, nullptr};
+
+    // Lock SDL orientation hints to widescreen landscape
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "2");
+    SDL_SetHint(SDL_HINT_FRAMEBUFFER_ACCELERATION, "1");
+    SDL_SetHint(SDL_HINT_VIDEO_DOUBLE_BUFFER, "1");
+
+    // MoltenVK Metal backend performance optimizations for iOS / ProMotion
+    setenv("MVK_CONFIG_FAST_MATH_ENABLED", "1", 1);
+    setenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0", 1);
+    setenv("MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS", "1", 1);
+    setenv("MVK_CONFIG_MAX_ACTIVE_METAL_COMMAND_BUFFERS_PER_QUEUE", "64", 1);
+    setenv("MVK_CONFIG_USE_COMMAND_BUFFER_PREALLOCATION", "1", 1);
+    setenv("MVK_CONFIG_RESUME_LOST_DEVICE", "1", 1);
+    setenv("MVK_CONFIG_ACTIVITY_PERFORMANCE_LOGGING_STYLE", "0", 1);
+
     rex::cvar::Init(1, argv);
     rex::cvar::ApplyEnvironment();
     rex::InitLoggingEarly();
@@ -330,7 +417,7 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
     return false;
   }
 
-  NSLog(@"[DMC4 Bridge] Entering SDL3 main message loop...");
+  NSLog(@"[DMC4 Bridge] Entering SDL3 main message loop in landscape mode...");
   const int exit_code = app_context.RunMainMessageLoop();
   NSLog(@"[DMC4 Bridge] Main message loop finished with exit code %d", exit_code);
 

@@ -17,6 +17,7 @@ struct RuntimeLaunchOptions {
   bool touch_controls = true;
   bool controller_vibration = true;
   bool debug_logging = false;
+  bool msaa = true;
 };
 
 void SetLaunchOptions(const RuntimeLaunchOptions& options);

@@ -79,6 +79,14 @@ class Dmc4App final : public rex::ReXApp {
     rex::audio::SetOutputGain(std::clamp(opts.master_volume, 0.0f, 1.0f));
     rex::cvar::SetFlagByName("vibration", opts.controller_vibration ? "true" : "false");
 
+    // Performance optimizations for Apple Silicon / iOS
+    rex::cvar::SetFlagByName("native_2x_msaa", opts.msaa ? "true" : "false");
+    rex::cvar::SetFlagByName("async_shader_compilation", "true");
+    rex::cvar::SetFlagByName("readback_memexport_fast", "true");
+    rex::cvar::SetFlagByName("readback_resolve", "none");
+    rex::cvar::SetFlagByName("vulkan_sparse_shared_memory", "true");
+    rex::cvar::SetFlagByName("vulkan_dynamic_rendering", "true");
+
     if (opts.debug_logging) {
       rex::cvar::SetFlagByName("log_level", "debug");
       rex::cvar::SetFlagByName("log_verbose", "true");

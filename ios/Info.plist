@@ -15,6 +15,8 @@
     <key>UIRequiresFullScreen</key><true/>
     <key>UIStatusBarHidden</key><true/>
     <key>CADisableMinimumFrameDurationOnPhone</key><true/>
+    <key>CADisableMinimumFrameDuration</key><true/>
+    <key>UIInitialInterfaceOrientation</key><string>UIInterfaceOrientationLandscapeRight</string>
     <key>GCSupportsControllerUserInteraction</key><true/>
     <key>GCSupportedGameControllers</key>
     <array>
@@ -29,9 +31,13 @@
     </array>
     <key>UISupportedInterfaceOrientations</key>
     <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
     </array>
 </dict>
 </plist>
