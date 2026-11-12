@@ -1,5 +1,8 @@
 # Build outputs
-build/
+build/*
+!build/recompiled/
+build/recompiled/*.stamp
+build/recompiled/*.d
 !generated/
 generated/*
 !generated/rexglue.cmake
