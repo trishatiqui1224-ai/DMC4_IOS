@@ -106,6 +106,15 @@ else()
     target_compile_definitions(DMC4 PRIVATE DMC4_IOS_HAS_RUNTIME=0)
 endif()
 
+if(IOS)
+    target_link_libraries(DMC4 PRIVATE
+        "-framework UIKit"
+        "-framework Foundation"
+        "-framework GameController"
+        "-framework CoreHaptics"
+    )
+endif()
+
 set(_dmc4_mvk_slice "ios-arm64")
 if(CMAKE_OSX_SYSROOT MATCHES "iphonesimulator")
     set(_dmc4_mvk_slice "ios-arm64_x86_64-simulator")

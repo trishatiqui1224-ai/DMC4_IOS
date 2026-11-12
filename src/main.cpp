@@ -51,12 +51,20 @@ class Dmc4App final : public rex::ReXApp {
 #if REX_PLATFORM_IOS
   void OnConfigureLogging(rex::LogConfig& config) override {
     const auto opts = dmc4::ios::GetLaunchOptions();
-    if (!opts.cache_dir.empty()) {
+    if (!opts.documents_dir.empty()) {
+      config.log_dir = std::filesystem::path(opts.documents_dir) / "logs";
+    } else if (!opts.cache_dir.empty()) {
       config.log_dir = std::filesystem::path(opts.cache_dir) / "logs";
     } else if (!opts.user_data_dir.empty()) {
       config.log_dir = std::filesystem::path(opts.user_data_dir) / "logs";
     } else {
       config.log_dir = rex::filesystem::GetUserFolder() / "dmc4" / "logs";
+    }
+
+    // Immediate flush so crash logs on iOS are never lost in RAM buffers
+    config.flush_level = spdlog::level::trace;
+    if (opts.debug_logging) {
+      config.default_level = spdlog::level::debug;
     }
   }
 
@@ -70,6 +78,11 @@ class Dmc4App final : public rex::ReXApp {
     rex::cvar::SetFlagByName("audio_mute", opts.mute_audio ? "true" : "false");
     rex::audio::SetOutputGain(std::clamp(opts.master_volume, 0.0f, 1.0f));
     rex::cvar::SetFlagByName("vibration", opts.controller_vibration ? "true" : "false");
+
+    if (opts.debug_logging) {
+      rex::cvar::SetFlagByName("log_level", "debug");
+      rex::cvar::SetFlagByName("log_verbose", "true");
+    }
 
     if (!config.graphics) {
       config.graphics = std::make_unique<rex::graphics::vulkan::VulkanGraphicsSystem>();
