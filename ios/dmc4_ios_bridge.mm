@@ -64,13 +64,9 @@ static void ConfigureLayerForProMotion(CALayer* layer, float targetFps) {
   if ([layer isKindOfClass:[CAMetalLayer class]]) {
     CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
     metalLayer.maximumDrawableCount = 3;  // Triple-buffering to eliminate stutter
-    if (@available(iOS 15.0, *)) {
-      float minFps = (targetFps > 60.0f) ? 60.0f : 30.0f;
-      float maxFps = (targetFps >= 120.0f) ? 120.0f : targetFps;
-      metalLayer.preferredFrameRateRange = CAFrameRateRangeMake(minFps, maxFps, maxFps);
-      NSLog(@"[DMC4 ProMotion] Configured CAMetalLayer: %.0f-%.0f Hz (preferred: %.0f Hz)",
-            minFps, maxFps, maxFps);
-    }
+    metalLayer.allowsNextDrawableTimeout = NO;
+    NSLog(@"[DMC4 ProMotion] Configured CAMetalLayer: triple-buffering (maximumDrawableCount=3, fps=%.0f)",
+          targetFps);
   }
   for (CALayer* sublayer in layer.sublayers) {
     ConfigureLayerForProMotion(sublayer, targetFps);
@@ -83,7 +79,7 @@ static void ConfigureLayerForProMotion(CALayer* layer, float targetFps) {
 
 API_AVAILABLE(ios(15.0))
 @interface Dmc4VirtualControllerManager : NSObject
-@property (nonatomic, strong) GCVirtualController* virtualController;
+@property (nonatomic, retain) GCVirtualController* virtualController;
 @property (nonatomic, assign) BOOL isEnabled;
 @property (nonatomic, assign) BOOL isConnected;
 @property (nonatomic, assign) float targetFrameRate;
@@ -127,6 +123,8 @@ API_AVAILABLE(ios(15.0))
 
 - (void)dealloc {
   [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [_virtualController release];
+  [super dealloc];
 }
 
 - (void)handleWindowNotification:(NSNotification*)notification {
@@ -151,7 +149,7 @@ API_AVAILABLE(ios(15.0))
       return;
     }
     GCVirtualControllerConfiguration* config =
-        [[GCVirtualControllerConfiguration alloc] init];
+        [[[GCVirtualControllerConfiguration alloc] init] autorelease];
     config.elements = [NSSet setWithObjects:
         GCInputLeftThumbstick,
         GCInputRightThumbstick,
@@ -169,18 +167,16 @@ API_AVAILABLE(ios(15.0))
 
     self.virtualController =
         [GCVirtualController virtualControllerWithConfiguration:config];
-    __weak typeof(self) weakSelf = self;
     [self.virtualController connectWithReplyHandler:^(NSError* _Nullable error) {
       dispatch_async(dispatch_get_main_queue(), ^{
-        typeof(self) strongSelf = weakSelf;
-        if (!strongSelf) return;
+        Dmc4VirtualControllerManager* manager = [Dmc4VirtualControllerManager sharedInstance];
         if (error) {
           NSLog(@"[DMC4 Touch] GCVirtualController connection failed: %@",
                 error.localizedDescription);
-          strongSelf.isConnected = NO;
+          manager.isConnected = NO;
         } else {
           NSLog(@"[DMC4 Touch] GCVirtualController connected in landscape layout");
-          strongSelf.isConnected = YES;
+          manager.isConnected = YES;
         }
       });
     }];
