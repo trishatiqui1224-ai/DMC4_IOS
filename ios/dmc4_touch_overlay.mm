@@ -618,8 +618,8 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
     normY = -(dy / dist) * scaledDist;  // Xbox 360 Y-axis: up is positive!
   }
 
-  int16_t axisX = static_cast<int16_t>(std::clamp(normX * 32767.0f, -32768.0f, 32767.0f));
-  int16_t axisY = static_cast<int16_t>(std::clamp(normY * 32767.0f, -32768.0f, 32767.0f));
+  int16_t axisX = static_cast<int16_t>(std::clamp<CGFloat>(normX * 32767.0, -32768.0, 32767.0));
+  int16_t axisY = static_cast<int16_t>(std::clamp<CGFloat>(normY * 32767.0, -32768.0, 32767.0));
 
   if (isLeft) {
     dmc4::touch::SetLeftThumb(axisX, axisY);
@@ -715,7 +715,10 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   }
 
   if (!targetWindow) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     targetWindow = UIApplication.sharedApplication.keyWindow;
+#pragma clang diagnostic pop
   }
 
   if (!targetWindow) {

@@ -29,3 +29,4 @@ void SetHapticFeedback(uint8_t style);
 uint8_t ConsumeHapticFeedback();
 
 }  // namespace dmc4::touch
+
