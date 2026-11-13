@@ -89,6 +89,10 @@ class Dmc4App final : public rex::ReXApp {
     rex::cvar::SetFlagByName("vulkan_sparse_shared_memory", "true");
     rex::cvar::SetFlagByName("vulkan_dynamic_rendering", "true");
 
+    // Automatically resolve Xbox 360 system dialogs (storage prompt, profile, etc.)
+    // on iOS since modal ImGui dialogs cannot receive touch/controller input on mobile.
+    rex::cvar::SetFlagByName("headless", "true");
+
     if (opts.debug_logging) {
       rex::cvar::SetFlagByName("log_level", "debug");
       rex::cvar::SetFlagByName("log_verbose", "true");

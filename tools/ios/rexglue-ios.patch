@@ -1124,6 +1124,42 @@ index 6e9ac8a..a44dd3c 100644
  #include <arpa/inet.h>
  #include <netinet/in.h>
  #include <netinet/ip.h>
+diff --git a/src/kernel/xam/xam_ui.cpp b/src/kernel/xam/xam_ui.cpp
+index e38cd25..35873d6 100644
+--- a/src/kernel/xam/xam_ui.cpp
++++ b/src/kernel/xam/xam_ui.cpp
+@@ -326,10 +326,18 @@ u32 XamShowMessageBoxUI_entry(u32 user_index, mapped_wstring title_ptr, mapped_w
+   }
+ 
+   X_RESULT result;
++#if REX_PLATFORM_IOS
++  // On iOS mobile devices, modal desktop ImGui dialogs cannot receive mouse clicks
++  // and freeze controller input. Always auto-resolve message boxes with the active button.
++  if (true) {
++#else
+   if (REXCVAR_GET(headless)) {
++#endif
+     // Auto-pick the focused button.
+     auto run = [result_ptr, active_button]() -> X_RESULT {
+-      *result_ptr = static_cast<uint32_t>(active_button);
++      if (result_ptr) {
++        *result_ptr = static_cast<uint32_t>(active_button);
++      }
+       return X_ERROR_SUCCESS;
+     };
+     result = xeXamDispatchHeadless(run, overlapped.guest_address());
+@@ -466,7 +474,11 @@ u32 XamShowKeyboardUI_entry(u32 user_index, u32 flags, mapped_wstring default_te
+   auto buffer_size = static_cast<size_t>(buffer_length) * 2;
+ 
+   X_RESULT result;
++#if REX_PLATFORM_IOS
++  if (true) {
++#else
+   if (REXCVAR_GET(headless)) {
++#endif
+     auto run = [default_text, buffer, buffer_length, buffer_size]() -> X_RESULT {
+       // Redirect default_text back into the buffer.
+       if (!default_text) {
 diff --git a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp b/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
 index 57fd161..2491357 100644
 --- a/src/kernel/xboxkrnl/xboxkrnl_threading.cpp
