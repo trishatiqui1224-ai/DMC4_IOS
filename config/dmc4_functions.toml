@@ -13,3 +13,6 @@
 0x82136FB8 = {}
 # Indirect guest call after the first graphics pipelines are created.
 0x82137060 = {}
+# Indirect guest call observed during gameplay scene transition / controller poll.
+0x821409F0 = {}
+0x82140A10 = {}
