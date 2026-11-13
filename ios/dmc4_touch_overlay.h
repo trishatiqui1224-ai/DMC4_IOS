@@ -19,6 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)hideOverlay;
 + (void)toggleOverlayVisibility;
 + (BOOL)isOverlayVisible;
++ (void)setHapticsEnabled:(BOOL)enabled;
++ (BOOL)isHapticsEnabled;
 
 @end
 

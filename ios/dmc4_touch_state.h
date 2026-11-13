@@ -27,6 +27,8 @@ void SetLeftThumb(int16_t x, int16_t y);
 void SetRightThumb(int16_t x, int16_t y);
 void SetHapticFeedback(uint8_t style);
 uint8_t ConsumeHapticFeedback();
+void SetHapticsEnabled(bool enabled);
+bool IsHapticsEnabled();
 
 }  // namespace dmc4::touch
 

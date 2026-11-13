@@ -57,11 +57,29 @@ void SetRightThumb(int16_t x, int16_t y) {
   g_touch_state.packet_number.fetch_add(1, std::memory_order_relaxed);
 }
 
+static std::atomic<bool> g_haptics_enabled{true};
+
+void SetHapticsEnabled(bool enabled) {
+  g_haptics_enabled.store(enabled, std::memory_order_relaxed);
+  if (!enabled) {
+    g_pending_haptic.store(0, std::memory_order_relaxed);
+  }
+}
+
+bool IsHapticsEnabled() {
+  return g_haptics_enabled.load(std::memory_order_relaxed);
+}
+
 void SetHapticFeedback(uint8_t style) {
-  g_pending_haptic.store(style, std::memory_order_relaxed);
+  if (g_haptics_enabled.load(std::memory_order_relaxed)) {
+    g_pending_haptic.store(style, std::memory_order_relaxed);
+  }
 }
 
 uint8_t ConsumeHapticFeedback() {
+  if (!g_haptics_enabled.load(std::memory_order_relaxed)) {
+    return 0;
+  }
   return g_pending_haptic.exchange(0, std::memory_order_relaxed);
 }
 

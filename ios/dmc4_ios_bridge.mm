@@ -124,6 +124,14 @@ extern "C" bool dmc4_ios_is_virtual_controller_active(void) {
   return [Dmc4TouchOverlayManager isOverlayVisible];
 }
 
+extern "C" void dmc4_ios_set_touch_haptics_enabled(bool enabled) {
+  [Dmc4TouchOverlayManager setHapticsEnabled:enabled];
+}
+
+extern "C" bool dmc4_ios_is_touch_haptics_enabled(void) {
+  return [Dmc4TouchOverlayManager isHapticsEnabled];
+}
+
 // -----------------------------------------------------------------------------
 // Diagnostics & Crash Handler Helpers
 // -----------------------------------------------------------------------------
@@ -225,9 +233,12 @@ extern "C" bool dmc4_ios_launch(const Dmc4IosLaunchConfig* config,
   options.master_volume = std::clamp(config->master_volume, 0.0f, 1.0f);
   options.mute_audio = config->mute_audio;
   options.touch_controls = config->touch_controls;
+  options.touch_haptics = config->touch_haptics;
   options.controller_vibration = config->controller_vibration;
   options.debug_logging = config->debug_logging;
   options.msaa = config->msaa;
+
+  [Dmc4TouchOverlayManager setHapticsEnabled:options.touch_haptics];
 
   g_targetFrameRate = static_cast<float>(options.frame_rate);
   InstallProMotionWindowObserver();

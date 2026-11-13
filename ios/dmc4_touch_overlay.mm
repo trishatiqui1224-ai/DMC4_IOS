@@ -45,6 +45,7 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   kDmc4TargetStart,
   kDmc4TargetBack,
   kDmc4TargetToggle,
+  kDmc4TargetHaptic,
   kDmc4TargetRestorePill
 };
 
@@ -73,6 +74,7 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   UIView* _btnStart;
   UIView* _btnBack;
   UIView* _btnToggle;
+  UIView* _btnHaptic;
   UIView* _restorePill;
 
   NSMutableArray<UIView*>* _allButtons;
@@ -102,14 +104,20 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _controlsAlpha = 1.0f;
     _opacityStep = 0;
-    _leftStickRadius = 60.0f;
-    _rightStickRadius = 48.0f;
+    _leftStickRadius = 56.0f;
+    _rightStickRadius = 44.0f;
     _allButtons = [[NSMutableArray alloc] init];
 
     _containerView = [[UIView alloc] initWithFrame:self.bounds];
     _containerView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _containerView.backgroundColor = [UIColor clearColor];
     [self addSubview:_containerView];
+
+    // Load saved haptic preference
+    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:@"touchHapticsEnabled"] != nil) {
+      dmc4::touch::SetHapticsEnabled([defaults boolForKey:@"touchHapticsEnabled"]);
+    }
 
     [self setupControls];
     [self setupHaptics];
@@ -145,6 +153,7 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   [_btnStart release];
   [_btnBack release];
   [_btnToggle release];
+  [_btnHaptic release];
   [_restorePill release];
   [_allButtons release];
 
@@ -163,8 +172,21 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   [_hapticLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 }
 
+- (void)triggerLightHaptic {
+  if (dmc4::touch::IsHapticsEnabled()) {
+    [_lightHaptic impactOccurred];
+  }
+}
+
+- (void)triggerMediumHaptic {
+  if (dmc4::touch::IsHapticsEnabled()) {
+    [_mediumHaptic impactOccurred];
+  }
+}
+
 - (void)pollHapticRumble:(CADisplayLink*)link {
   (void)link;
+  if (!dmc4::touch::IsHapticsEnabled()) return;
   uint8_t haptic = dmc4::touch::ConsumeHapticFeedback();
   if (haptic == 1) {
     [_lightHaptic impactOccurred];
@@ -175,13 +197,34 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   }
 }
 
+- (void)toggleHaptics {
+  BOOL current = dmc4::touch::IsHapticsEnabled();
+  BOOL next = !current;
+  dmc4::touch::SetHapticsEnabled(next);
+  [[NSUserDefaults standardUserDefaults] setBool:next forKey:@"touchHapticsEnabled"];
+  [self updateHapticButtonUI];
+  if (next) {
+    [_mediumHaptic impactOccurred];
+  }
+}
+
+- (void)updateHapticButtonUI {
+  BOOL enabled = dmc4::touch::IsHapticsEnabled();
+  UILabel* label = (UILabel*)[_btnHaptic viewWithTag:101];
+  if (label) {
+    label.text = enabled ? @"📳" : @"🔕";
+    label.textColor = enabled ? [UIColor colorWithRed:0.30f green:0.90f blue:0.40f alpha:0.95f]
+                              : [UIColor colorWithWhite:0.60f alpha:0.70f];
+  }
+}
+
 - (UIView*)createButtonWithTitle:(NSString*)title
                      accentColor:(UIColor*)accent
                              tag:(NSInteger)tag
                     cornerRadius:(CGFloat)radius {
   UIView* v = [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
   v.tag = tag;
-  v.backgroundColor = [UIColor colorWithWhite:0.12f alpha:0.50f];
+  v.backgroundColor = [UIColor colorWithWhite:0.12f alpha:0.48f];
   v.layer.cornerRadius = radius;
   v.layer.borderWidth = 1.5f;
   v.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.35f].CGColor;
@@ -202,10 +245,10 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
 }
 
 - (void)setupControls {
-  // Left Stick
+  // Left Stick (Movement)
   _leftStickBase = [[UIView alloc] initWithFrame:CGRectZero];
-  _leftStickBase.backgroundColor = [UIColor colorWithWhite:0.10f alpha:0.35f];
-  _leftStickBase.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.30f].CGColor;
+  _leftStickBase.backgroundColor = [UIColor colorWithWhite:0.10f alpha:0.32f];
+  _leftStickBase.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.28f].CGColor;
   _leftStickBase.layer.borderWidth = 1.5f;
   _leftStickBase.layer.cornerRadius = _leftStickRadius;
   [_containerView addSubview:_leftStickBase];
@@ -214,36 +257,36 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   _leftStickKnob.backgroundColor = [UIColor colorWithWhite:0.85f alpha:0.65f];
   _leftStickKnob.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.45f].CGColor;
   _leftStickKnob.layer.borderWidth = 1.5f;
-  _leftStickKnob.layer.cornerRadius = 26.0f;
+  _leftStickKnob.layer.cornerRadius = 24.0f;
   [_containerView addSubview:_leftStickKnob];
 
-  // Right Stick
+  // Right Stick (Camera)
   _rightStickBase = [[UIView alloc] initWithFrame:CGRectZero];
-  _rightStickBase.backgroundColor = [UIColor colorWithWhite:0.10f alpha:0.30f];
-  _rightStickBase.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.25f].CGColor;
+  _rightStickBase.backgroundColor = [UIColor colorWithWhite:0.10f alpha:0.28f];
+  _rightStickBase.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.22f].CGColor;
   _rightStickBase.layer.borderWidth = 1.5f;
   _rightStickBase.layer.cornerRadius = _rightStickRadius;
   [_containerView addSubview:_rightStickBase];
 
   _rightStickKnob = [[UIView alloc] initWithFrame:CGRectZero];
-  _rightStickKnob.backgroundColor = [UIColor colorWithWhite:0.80f alpha:0.60f];
-  _rightStickKnob.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.40f].CGColor;
+  _rightStickKnob.backgroundColor = [UIColor colorWithWhite:0.75f alpha:0.55f];
+  _rightStickKnob.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.35f].CGColor;
   _rightStickKnob.layer.borderWidth = 1.5f;
-  _rightStickKnob.layer.cornerRadius = 22.0f;
+  _rightStickKnob.layer.cornerRadius = 20.0f;
   [_containerView addSubview:_rightStickKnob];
 
-  // Action diamond
-  UIColor* colorY = [UIColor colorWithRed:1.0f green:0.82f blue:0.20f alpha:0.95f];
-  UIColor* colorB = [UIColor colorWithRed:0.96f green:0.28f blue:0.28f alpha:0.95f];
-  UIColor* colorA = [UIColor colorWithRed:0.28f green:0.90f blue:0.38f alpha:0.95f];
-  UIColor* colorX = [UIColor colorWithRed:0.28f green:0.64f blue:1.00f alpha:0.95f];
+  // Action diamond (Y top, B right, A bottom, X left)
+  UIColor* colorY = [UIColor colorWithRed:1.00f green:0.84f blue:0.20f alpha:0.95f];
+  UIColor* colorB = [UIColor colorWithRed:0.96f green:0.26f blue:0.26f alpha:0.95f];
+  UIColor* colorA = [UIColor colorWithRed:0.26f green:0.90f blue:0.38f alpha:0.95f];
+  UIColor* colorX = [UIColor colorWithRed:0.26f green:0.62f blue:1.00f alpha:0.95f];
 
-  _btnY = [self createButtonWithTitle:@"Y" accentColor:colorY tag:kDmc4TargetButtonY cornerRadius:26.0f];
-  _btnB = [self createButtonWithTitle:@"B" accentColor:colorB tag:kDmc4TargetButtonB cornerRadius:26.0f];
-  _btnA = [self createButtonWithTitle:@"A" accentColor:colorA tag:kDmc4TargetButtonA cornerRadius:26.0f];
-  _btnX = [self createButtonWithTitle:@"X" accentColor:colorX tag:kDmc4TargetButtonX cornerRadius:26.0f];
+  _btnY = [self createButtonWithTitle:@"Y" accentColor:colorY tag:kDmc4TargetButtonY cornerRadius:25.0f];
+  _btnB = [self createButtonWithTitle:@"B" accentColor:colorB tag:kDmc4TargetButtonB cornerRadius:25.0f];
+  _btnA = [self createButtonWithTitle:@"A" accentColor:colorA tag:kDmc4TargetButtonA cornerRadius:25.0f];
+  _btnX = [self createButtonWithTitle:@"X" accentColor:colorX tag:kDmc4TargetButtonX cornerRadius:25.0f];
 
-  // D-Pad
+  // D-Pad (Dante Style Switcher)
   UIColor* colorDpad = [UIColor colorWithWhite:0.92f alpha:0.90f];
   _btnDpadUp = [self createButtonWithTitle:@"▲" accentColor:colorDpad tag:kDmc4TargetDpadUp cornerRadius:8.0f];
   _btnDpadDown = [self createButtonWithTitle:@"▼" accentColor:colorDpad tag:kDmc4TargetDpadDown cornerRadius:8.0f];
@@ -263,11 +306,20 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   _btnStart = [self createButtonWithTitle:@"START" accentColor:colorSystem tag:kDmc4TargetStart cornerRadius:8.0f];
   _btnToggle = [self createButtonWithTitle:@"👁" accentColor:colorSystem tag:kDmc4TargetToggle cornerRadius:8.0f];
 
+  // Haptic Feedback Toggle Button
+  BOOL hapticsOn = dmc4::touch::IsHapticsEnabled();
+  UIColor* colorHaptic = hapticsOn ? [UIColor colorWithRed:0.30f green:0.90f blue:0.40f alpha:0.95f]
+                                   : [UIColor colorWithWhite:0.60f alpha:0.70f];
+  _btnHaptic = [self createButtonWithTitle:(hapticsOn ? @"📳" : @"🔕")
+                               accentColor:colorHaptic
+                                       tag:kDmc4TargetHaptic
+                              cornerRadius:8.0f];
+
   // Restore Pill (shown only when controls are completely hidden)
   _restorePill = [[UIView alloc] initWithFrame:CGRectZero];
   _restorePill.tag = kDmc4TargetRestorePill;
-  _restorePill.backgroundColor = [UIColor colorWithWhite:0.15f alpha:0.40f];
-  _restorePill.layer.cornerRadius = 14.0f;
+  _restorePill.backgroundColor = [UIColor colorWithWhite:0.15f alpha:0.45f];
+  _restorePill.layer.cornerRadius = 13.0f;
   _restorePill.layer.borderWidth = 1.0f;
   _restorePill.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.25f].CGColor;
   _restorePill.hidden = YES;
@@ -288,66 +340,67 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
   if (@available(iOS 11.0, *)) {
     insets = self.safeAreaInsets;
   }
-  const CGFloat safeLeft = MAX(insets.left, 20.0f);
-  const CGFloat safeRight = MAX(insets.right, 20.0f);
-  const CGFloat safeTop = MAX(insets.top, 10.0f);
+  const CGFloat safeLeft = MAX(insets.left, 24.0f);
+  const CGFloat safeRight = MAX(insets.right, 24.0f);
+  const CGFloat safeTop = MAX(insets.top, 8.0f);
   const CGFloat safeBottom = MAX(insets.bottom, 12.0f);
   const CGFloat w = self.bounds.size.width;
   const CGFloat h = self.bounds.size.height;
 
   _containerView.frame = self.bounds;
 
-  // Left Stick
-  _leftStickCenter = CGPointMake(safeLeft + 85.0f, h - safeBottom - 85.0f);
+  // 1. Shoulders & Triggers (Top corners)
+  _btnLT.frame = CGRectMake(safeLeft + 2.0f, safeTop + 6.0f, 66.0f, 36.0f);
+  _btnLB.frame = CGRectMake(safeLeft + 74.0f, safeTop + 6.0f, 66.0f, 36.0f);
+
+  _btnRB.frame = CGRectMake(w - safeRight - 140.0f, safeTop + 6.0f, 66.0f, 36.0f);
+  _btnRT.frame = CGRectMake(w - safeRight - 68.0f, safeTop + 6.0f, 66.0f, 36.0f);
+
+  // 2. D-Pad (Left side, comfortably spaced below shoulders, above stick)
+  const CGFloat dpadCenterX = safeLeft + 72.0f;
+  const CGFloat dpadCenterY = safeTop + 115.0f;
+  _btnDpadUp.frame = CGRectMake(dpadCenterX - 18.0f, dpadCenterY - 48.0f, 36.0f, 34.0f);
+  _btnDpadDown.frame = CGRectMake(dpadCenterX - 18.0f, dpadCenterY + 14.0f, 36.0f, 34.0f);
+  _btnDpadLeft.frame = CGRectMake(dpadCenterX - 48.0f, dpadCenterY - 17.0f, 34.0f, 34.0f);
+  _btnDpadRight.frame = CGRectMake(dpadCenterX + 14.0f, dpadCenterY - 17.0f, 34.0f, 34.0f);
+
+  // 3. Left Movement Stick (Bottom-left natural thumb rest)
+  _leftStickCenter = CGPointMake(safeLeft + 72.0f, h - safeBottom - 76.0f);
   _leftStickBase.frame = CGRectMake(_leftStickCenter.x - _leftStickRadius,
                                     _leftStickCenter.y - _leftStickRadius,
                                     _leftStickRadius * 2.0f,
                                     _leftStickRadius * 2.0f);
-  _leftStickKnob.frame = CGRectMake(_leftStickCenter.x - 26.0f,
-                                    _leftStickCenter.y - 26.0f,
-                                    52.0f, 52.0f);
+  _leftStickKnob.frame = CGRectMake(_leftStickCenter.x - 24.0f,
+                                    _leftStickCenter.y - 24.0f,
+                                    48.0f, 48.0f);
 
-  // Right Stick (Camera)
-  _rightStickCenter = CGPointMake(w - safeRight - 185.0f, h - safeBottom - 75.0f);
+  // 4. Action Diamond (Y top, B right, A bottom, X left)
+  const CGFloat actCenterX = w - safeRight - 82.0f;
+  const CGFloat actCenterY = h - safeBottom - 92.0f;
+  _btnY.frame = CGRectMake(actCenterX - 25.0f, actCenterY - 56.0f, 50.0f, 50.0f);
+  _btnB.frame = CGRectMake(actCenterX + 31.0f, actCenterY - 25.0f, 50.0f, 50.0f);
+  _btnA.frame = CGRectMake(actCenterX - 25.0f, actCenterY + 6.0f, 50.0f, 50.0f);
+  _btnX.frame = CGRectMake(actCenterX - 56.0f, actCenterY - 25.0f, 50.0f, 50.0f);
+
+  // 5. Right Camera Stick (Safely inward from button X, zero collision)
+  _rightStickCenter = CGPointMake(w - safeRight - 225.0f, h - safeBottom - 72.0f);
   _rightStickBase.frame = CGRectMake(_rightStickCenter.x - _rightStickRadius,
                                      _rightStickCenter.y - _rightStickRadius,
                                      _rightStickRadius * 2.0f,
                                      _rightStickRadius * 2.0f);
-  _rightStickKnob.frame = CGRectMake(_rightStickCenter.x - 22.0f,
-                                     _rightStickCenter.y - 22.0f,
-                                     44.0f, 44.0f);
+  _rightStickKnob.frame = CGRectMake(_rightStickCenter.x - 20.0f,
+                                     _rightStickCenter.y - 20.0f,
+                                     40.0f, 40.0f);
 
-  // D-Pad
-  const CGFloat dpadCenterX = safeLeft + 85.0f;
-  const CGFloat dpadCenterY = safeTop + 105.0f;
-  _btnDpadUp.frame = CGRectMake(dpadCenterX - 18.0f, dpadCenterY - 50.0f, 36.0f, 32.0f);
-  _btnDpadDown.frame = CGRectMake(dpadCenterX - 18.0f, dpadCenterY + 18.0f, 36.0f, 32.0f);
-  _btnDpadLeft.frame = CGRectMake(dpadCenterX - 50.0f, dpadCenterY - 16.0f, 32.0f, 32.0f);
-  _btnDpadRight.frame = CGRectMake(dpadCenterX + 18.0f, dpadCenterY - 16.0f, 32.0f, 32.0f);
-
-  // Shoulders & Triggers
-  _btnLT.frame = CGRectMake(safeLeft + 10.0f, safeTop + 12.0f, 58.0f, 34.0f);
-  _btnLB.frame = CGRectMake(safeLeft + 78.0f, safeTop + 12.0f, 58.0f, 34.0f);
-
-  _btnRB.frame = CGRectMake(w - safeRight - 136.0f, safeTop + 12.0f, 58.0f, 34.0f);
-  _btnRT.frame = CGRectMake(w - safeRight - 68.0f, safeTop + 12.0f, 58.0f, 34.0f);
-
-  // Center System Buttons
+  // 6. Top System Bar (Center top)
   const CGFloat midX = w * 0.5f;
-  _btnBack.frame = CGRectMake(midX - 85.0f, safeTop + 10.0f, 52.0f, 30.0f);
-  _btnToggle.frame = CGRectMake(midX - 24.0f, safeTop + 10.0f, 48.0f, 30.0f);
-  _btnStart.frame = CGRectMake(midX + 33.0f, safeTop + 10.0f, 52.0f, 30.0f);
+  _btnBack.frame = CGRectMake(midX - 114.0f, safeTop + 6.0f, 48.0f, 28.0f);
+  _btnToggle.frame = CGRectMake(midX - 58.0f, safeTop + 6.0f, 44.0f, 28.0f);
+  _btnHaptic.frame = CGRectMake(midX - 6.0f, safeTop + 6.0f, 44.0f, 28.0f);
+  _btnStart.frame = CGRectMake(midX + 46.0f, safeTop + 6.0f, 48.0f, 28.0f);
 
   // Restore Pill
-  _restorePill.frame = CGRectMake(midX - 24.0f, safeTop + 6.0f, 48.0f, 28.0f);
-
-  // Action Diamond (Y top, B right, A bottom, X left)
-  const CGFloat actCenterX = w - safeRight - 80.0f;
-  const CGFloat actCenterY = h - safeBottom - 105.0f;
-  _btnY.frame = CGRectMake(actCenterX - 26.0f, actCenterY - 62.0f, 52.0f, 52.0f);
-  _btnB.frame = CGRectMake(actCenterX + 36.0f, actCenterY - 26.0f, 52.0f, 52.0f);
-  _btnA.frame = CGRectMake(actCenterX - 26.0f, actCenterY + 10.0f, 52.0f, 52.0f);
-  _btnX.frame = CGRectMake(actCenterX - 62.0f, actCenterY - 26.0f, 52.0f, 52.0f);
+  _restorePill.frame = CGRectMake(midX - 24.0f, safeTop + 4.0f, 48.0f, 26.0f);
 }
 
 - (void)cycleOpacity {
@@ -388,14 +441,16 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
     return nil;
   }
 
+  // Buttons have highest touch priority
   for (UIView* btn in _allButtons) {
-    if (CGRectContainsPoint(CGRectInset(btn.frame, -12, -12), point)) {
+    if (CGRectContainsPoint(CGRectInset(btn.frame, -8, -8), point)) {
       return self;
     }
   }
 
-  if (CGRectContainsPoint(CGRectInset(_leftStickBase.frame, -25, -25), point) ||
-      CGRectContainsPoint(CGRectInset(_rightStickBase.frame, -20, -20), point)) {
+  // Sticks have second priority with modest margins
+  if (CGRectContainsPoint(CGRectInset(_leftStickBase.frame, -15, -15), point) ||
+      CGRectContainsPoint(CGRectInset(_rightStickBase.frame, -12, -12), point)) {
     return self;
   }
 
@@ -411,19 +466,20 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
     return kDmc4TargetNone;
   }
 
+  // Check buttons first so button touches are never swallowed by thumbsticks
   for (UIView* btn in _allButtons) {
-    if (CGRectContainsPoint(CGRectInset(btn.frame, -12, -12), pt)) {
+    if (CGRectContainsPoint(CGRectInset(btn.frame, -8, -8), pt)) {
       return (Dmc4TouchTarget)btn.tag;
     }
   }
 
   CGFloat distLeft = std::hypot(pt.x - _leftStickCenter.x, pt.y - _leftStickCenter.y);
-  if (distLeft <= _leftStickRadius + 25.0f) {
+  if (distLeft <= _leftStickRadius + 15.0f) {
     return kDmc4TargetLeftStick;
   }
 
   CGFloat distRight = std::hypot(pt.x - _rightStickCenter.x, pt.y - _rightStickCenter.y);
-  if (distRight <= _rightStickRadius + 25.0f) {
+  if (distRight <= _rightStickRadius + 12.0f) {
     return kDmc4TargetRightStick;
   }
 
@@ -501,11 +557,11 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
 
   if (buttonView) {
     if (pressed) {
-      buttonView.transform = CGAffineTransformMakeScale(0.92f, 0.92f);
+      buttonView.transform = CGAffineTransformMakeScale(0.90f, 0.90f);
       buttonView.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.45f];
     } else {
       buttonView.transform = CGAffineTransformIdentity;
-      buttonView.backgroundColor = [UIColor colorWithWhite:0.12f alpha:0.50f];
+      buttonView.backgroundColor = [UIColor colorWithWhite:0.12f alpha:0.48f];
     }
   }
 }
@@ -520,12 +576,17 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
     _activeTouches[(uintptr_t)touch] = target;
 
     if (target == kDmc4TargetToggle || target == kDmc4TargetRestorePill) {
-      [_lightHaptic impactOccurred];
+      [self triggerLightHaptic];
       [self cycleOpacity];
       continue;
     }
 
-    [_lightHaptic impactOccurred];
+    if (target == kDmc4TargetHaptic) {
+      [self toggleHaptics];
+      continue;
+    }
+
+    [self triggerLightHaptic];
 
     if (target == kDmc4TargetLeftStick) {
       [self updateStick:_leftStickKnob center:_leftStickCenter radius:_leftStickRadius touchPoint:pt isLeft:YES];
@@ -550,11 +611,10 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
       [self updateStick:_leftStickKnob center:_leftStickCenter radius:_leftStickRadius touchPoint:pt isLeft:YES];
     } else if (target == kDmc4TargetRightStick) {
       [self updateStick:_rightStickKnob center:_rightStickCenter radius:_rightStickRadius touchPoint:pt isLeft:NO];
-    } else {
-      // If finger slides significantly off button, temporarily release it
+    } else if (target != kDmc4TargetToggle && target != kDmc4TargetHaptic && target != kDmc4TargetRestorePill) {
       UIView* btn = [self viewForTarget:target];
       if (btn) {
-        BOOL inside = CGRectContainsPoint(CGRectInset(btn.frame, -16, -16), pt);
+        BOOL inside = CGRectContainsPoint(CGRectInset(btn.frame, -14, -14), pt);
         [self setButtonStateForTarget:target pressed:inside];
       }
     }
@@ -580,7 +640,7 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
         _rightStickKnob.center = _rightStickCenter;
       }];
       dmc4::touch::SetRightThumb(0, 0);
-    } else if (target != kDmc4TargetToggle && target != kDmc4TargetRestorePill) {
+    } else if (target != kDmc4TargetToggle && target != kDmc4TargetHaptic && target != kDmc4TargetRestorePill) {
       [self setButtonStateForTarget:target pressed:NO];
     }
   }
@@ -772,6 +832,19 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
 + (BOOL)isOverlayVisible {
   Dmc4TouchOverlayManager* mgr = [Dmc4TouchOverlayManager sharedInstance];
   return mgr.isEnabled && mgr.overlayView != nil && !mgr.overlayView.isHidden;
+}
+
++ (void)setHapticsEnabled:(BOOL)enabled {
+  dmc4::touch::SetHapticsEnabled(enabled);
+  [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"touchHapticsEnabled"];
+  Dmc4TouchOverlayManager* mgr = [Dmc4TouchOverlayManager sharedInstance];
+  if (mgr.overlayView) {
+    [mgr.overlayView updateHapticButtonUI];
+  }
+}
+
++ (BOOL)isHapticsEnabled {
+  return dmc4::touch::IsHapticsEnabled();
 }
 
 @end

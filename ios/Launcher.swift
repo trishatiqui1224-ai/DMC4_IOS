@@ -24,6 +24,7 @@ private struct LauncherView: View {
     @AppStorage("masterVolume") private var masterVolume = 1.0
     @AppStorage("muteAudio") private var muteAudio = false
     @AppStorage("touchControls") private var touchControls = true
+    @AppStorage("touchHapticsEnabled") private var touchHapticsEnabled = true
     @AppStorage("controllerVibration") private var controllerVibration = true
     @AppStorage("debugLogging") private var debugLogging = false
     @AppStorage("msaaEnabled") private var msaaEnabled = true
@@ -241,6 +242,7 @@ private struct LauncherView: View {
         let vol = Float(masterVolume)
         let mute = muteAudio
         let touch = touchControls
+        let touchHaptics = touchHapticsEnabled
         let vibrate = controllerVibration
         let debugLog = debugLogging
         let msaa = msaaEnabled
@@ -267,6 +269,7 @@ private struct LauncherView: View {
                                 master_volume: vol,
                                 mute_audio: mute,
                                 touch_controls: touch,
+                                touch_haptics: touchHaptics,
                                 controller_vibration: vibrate,
                                 debug_logging: debugLog,
                                 msaa: msaa
@@ -291,6 +294,7 @@ private struct SettingsView: View {
     @AppStorage("masterVolume") private var masterVolume = 1.0
     @AppStorage("muteAudio") private var muteAudio = false
     @AppStorage("touchControls") private var touchControls = true
+    @AppStorage("touchHapticsEnabled") private var touchHapticsEnabled = true
     @AppStorage("controllerVibration") private var controllerVibration = true
     @AppStorage("debugLogging") private var debugLogging = false
     @AppStorage("msaaEnabled") private var msaaEnabled = true
@@ -359,7 +363,10 @@ private struct SettingsView: View {
 
             Section {
                 Toggle("On-screen touch controls", isOn: $touchControls)
-                Toggle("Controller vibration & haptics", isOn: $controllerVibration)
+                if touchControls {
+                    Toggle("Touch controls haptic feedback", isOn: $touchHapticsEnabled)
+                }
+                Toggle("Controller vibration (Gamepad rumble)", isOn: $controllerVibration)
                 if !controllers.isEmpty {
                     ForEach(controllers, id: \.self) { name in
                         Label(name, systemImage: "gamecontroller.fill")

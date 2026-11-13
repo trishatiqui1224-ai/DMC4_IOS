@@ -15,6 +15,7 @@ struct RuntimeLaunchOptions {
   float master_volume = 1.0f;
   bool mute_audio = false;
   bool touch_controls = true;
+  bool touch_haptics = true;
   bool controller_vibration = true;
   bool debug_logging = false;
   bool msaa = true;
