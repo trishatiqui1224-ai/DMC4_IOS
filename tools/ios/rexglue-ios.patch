@@ -1435,10 +1435,19 @@ index 8197bb4..fbdfb67 100644
                      "allow fallback to solid fill for line/point polygon modes)")
      .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
-index 914b311..0114719 100644
+index 914b311..0f039be 100644
 --- a/src/ui/vulkan/vulkan_instance.cpp
 +++ b/src/ui/vulkan/vulkan_instance.cpp
-@@ -23,6 +23,9 @@
+@@ -9,6 +9,8 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <atomic>
++#include <string_view>
+ #include <sstream>
+ #include <string>
+ #include <unordered_map>
+@@ -23,6 +25,9 @@
  
  #if REX_PLATFORM_MAC
  #include "vulkan_moltenvk.h"
@@ -1448,7 +1457,7 @@ index 914b311..0114719 100644
  #endif
  
  REXCVAR_DEFINE_BOOL(vulkan_log_debug_messages, true, "UI/Vulkan", "Log Vulkan debug messages");
-@@ -45,6 +48,7 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+@@ -45,6 +50,7 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
  
    bool functions_loaded = true;
    bool loader_loaded = false;
@@ -1456,7 +1465,7 @@ index 914b311..0114719 100644
  #if REX_PLATFORM_MAC
    const MacOSVulkanRuntimePaths macos_runtime_paths = DetectMacOSVulkanRuntimePaths();
    ConfigureMacOSVulkanEnvironment(macos_runtime_paths);
-@@ -74,6 +78,29 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+@@ -74,6 +80,29 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
      }
      return nullptr;
    }
@@ -1486,7 +1495,7 @@ index 914b311..0114719 100644
  #else
    loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
    if (!loader_loaded) {
-@@ -82,8 +109,16 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+@@ -82,8 +111,16 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
    }
  #endif
  
@@ -1503,6 +1512,25 @@ index 914b311..0114719 100644
    XE_VULKAN_LOAD_LOADER_FUNCTION(vkGetInstanceProcAddr);
    XE_VULKAN_LOAD_LOADER_FUNCTION(vkDestroyInstance);
  #undef XE_VULKAN_LOAD_LOADER_FUNCTION
+@@ -563,6 +600,18 @@ VkBool32 VulkanInstance::DebugUtilsMessengerCallback(
+     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
+     VkDebugUtilsMessageTypeFlagsEXT message_types,
+     const VkDebugUtilsMessengerCallbackDataEXT* callback_data, [[maybe_unused]] void* user_data) {
++#if REX_PLATFORM_IOS
++  // Metal always enables primitive restart for strips. MoltenVK may report
++  // this limitation for each draw, so retain one copy in the device log.
++  if (message_severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT &&
++      callback_data->pMessage && std::string_view(callback_data->pMessage).find(
++          "Metal does not support disabling primitive restart.") != std::string_view::npos) {
++    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
++    if (reported.test_and_set(std::memory_order_relaxed)) {
++      return VK_FALSE;
++    }
++  }
++#endif
+   std::ostringstream log_str;
+ 
+   log_str << "Vulkan " << vk::to_string(vk::DebugUtilsMessageSeverityFlagBitsEXT(message_severity))
 diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
 index 23645ef..80491b1 100644
 --- a/src/ui/vulkan/vulkan_presenter.cpp
