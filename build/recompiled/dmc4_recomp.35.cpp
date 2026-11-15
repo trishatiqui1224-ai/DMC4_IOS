@@ -28191,6 +28191,25 @@ loc_8285E4C0:
 	return;
 }
 
+DEFINE_REX_FUNC(sub_8286D828) {
+	REX_FUNC_PROLOGUE();
+	// lis r11,-32072
+	ctx.r11.s64 = -2101870592;
+	// lwz r11,20300(r11)
+	ctx.r11.u64 = REX_LOAD_U32(ctx.r11.u32 + 20300);
+	// lwz r3,14392(r11)
+	ctx.r3.u64 = REX_LOAD_U32(ctx.r11.u32 + 14392);
+	// lwz r11,0(r3)
+	ctx.r11.u64 = REX_LOAD_U32(ctx.r3.u32 + 0);
+	// lwz r11,80(r11)
+	ctx.r11.u64 = REX_LOAD_U32(ctx.r11.u32 + 80);
+	// mtctr r11
+	ctx.ctr.u64 = ctx.r11.u64;
+	// bctr
+	REX_CALL_INDIRECT_FUNC(ctx.ctr.u32);
+	return;
+}
+
 DEFINE_REX_FUNC(sub_828879D0) {
 	REX_FUNC_PROLOGUE();
 	PPCRegister temp{};

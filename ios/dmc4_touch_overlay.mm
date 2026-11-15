@@ -375,15 +375,15 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
                                     48.0f, 48.0f);
 
   // 4. Action Diamond (Y top, B right, A bottom, X left)
-  const CGFloat actCenterX = w - safeRight - 82.0f;
-  const CGFloat actCenterY = h - safeBottom - 92.0f;
-  _btnY.frame = CGRectMake(actCenterX - 25.0f, actCenterY - 56.0f, 50.0f, 50.0f);
-  _btnB.frame = CGRectMake(actCenterX + 31.0f, actCenterY - 25.0f, 50.0f, 50.0f);
-  _btnA.frame = CGRectMake(actCenterX - 25.0f, actCenterY + 6.0f, 50.0f, 50.0f);
-  _btnX.frame = CGRectMake(actCenterX - 56.0f, actCenterY - 25.0f, 50.0f, 50.0f);
+  const CGFloat actCenterX = w - safeRight - 88.0f;
+  const CGFloat actCenterY = h - safeBottom - 86.0f;
+  _btnY.frame = CGRectMake(actCenterX - 22.0f, actCenterY - 70.0f, 44.0f, 44.0f);
+  _btnB.frame = CGRectMake(actCenterX + 26.0f, actCenterY - 22.0f, 44.0f, 44.0f);
+  _btnA.frame = CGRectMake(actCenterX - 22.0f, actCenterY + 26.0f, 44.0f, 44.0f);
+  _btnX.frame = CGRectMake(actCenterX - 70.0f, actCenterY - 22.0f, 44.0f, 44.0f);
 
   // 5. Right Camera Stick (Safely inward from button X, zero collision)
-  _rightStickCenter = CGPointMake(w - safeRight - 225.0f, h - safeBottom - 72.0f);
+  _rightStickCenter = CGPointMake(actCenterX - 134.0f, h - safeBottom - 58.0f);
   _rightStickBase.frame = CGRectMake(_rightStickCenter.x - _rightStickRadius,
                                      _rightStickCenter.y - _rightStickRadius,
                                      _rightStickRadius * 2.0f,
@@ -393,11 +393,11 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
                                      40.0f, 40.0f);
 
   // 6. Top System Bar (Center top)
-  const CGFloat midX = w * 0.5f;
-  _btnBack.frame = CGRectMake(midX - 114.0f, safeTop + 6.0f, 48.0f, 28.0f);
-  _btnToggle.frame = CGRectMake(midX - 58.0f, safeTop + 6.0f, 44.0f, 28.0f);
-  _btnHaptic.frame = CGRectMake(midX - 6.0f, safeTop + 6.0f, 44.0f, 28.0f);
-  _btnStart.frame = CGRectMake(midX + 46.0f, safeTop + 6.0f, 48.0f, 28.0f);
+  const CGFloat midX = (safeLeft + w - safeRight) * 0.5f;
+  _btnBack.frame = CGRectMake(midX - 117.0f, safeTop + 6.0f, 64.0f, 34.0f);
+  _btnToggle.frame = CGRectMake(midX - 47.0f, safeTop + 6.0f, 44.0f, 34.0f);
+  _btnHaptic.frame = CGRectMake(midX + 3.0f, safeTop + 6.0f, 44.0f, 34.0f);
+  _btnStart.frame = CGRectMake(midX + 53.0f, safeTop + 6.0f, 64.0f, 34.0f);
 
   // Restore Pill
   _restorePill.frame = CGRectMake(midX - 24.0f, safeTop + 4.0f, 48.0f, 26.0f);
@@ -466,11 +466,24 @@ typedef NS_ENUM(NSInteger, Dmc4TouchTarget) {
     return kDmc4TargetNone;
   }
 
-  // Check buttons first so button touches are never swallowed by thumbsticks
+  // A touch inside a visible button takes priority over nearby touch margins.
+  UIView* nearestButton = nil;
+  CGFloat nearestDistance = CGFLOAT_MAX;
   for (UIView* btn in _allButtons) {
-    if (CGRectContainsPoint(CGRectInset(btn.frame, -8, -8), pt)) {
+    if (CGRectContainsPoint(btn.frame, pt)) {
       return (Dmc4TouchTarget)btn.tag;
     }
+    if (CGRectContainsPoint(CGRectInset(btn.frame, -8, -8), pt)) {
+      const CGFloat distance =
+          std::hypot(pt.x - CGRectGetMidX(btn.frame), pt.y - CGRectGetMidY(btn.frame));
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestButton = btn;
+      }
+    }
+  }
+  if (nearestButton) {
+    return (Dmc4TouchTarget)nearestButton.tag;
   }
 
   CGFloat distLeft = std::hypot(pt.x - _leftStickCenter.x, pt.y - _leftStickCenter.y);

@@ -18,3 +18,5 @@
 0x82140A10 = {}
 # Indirect call while loading after the opening cutscenes on iOS.
 0x8286E388 = {}
+# Indirect call at the start of the first mission on iOS.
+0x8286D828 = {}

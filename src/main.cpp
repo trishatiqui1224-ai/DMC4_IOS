@@ -89,7 +89,8 @@ class Dmc4App final : public rex::ReXApp {
     rex::cvar::SetFlagByName("readback_memexport_fast", "true");
     rex::cvar::SetFlagByName("readback_resolve", "none");
     rex::cvar::SetFlagByName("vulkan_sparse_shared_memory", "true");
-    rex::cvar::SetFlagByName("vulkan_dynamic_rendering", "true");
+    // Use the render-pass path while diagnosing cutscene attachment artifacts.
+    rex::cvar::SetFlagByName("vulkan_dynamic_rendering", "false");
 
     // Automatically resolve Xbox 360 system dialogs (storage prompt, profile, etc.)
     // on iOS since modal ImGui dialogs cannot receive touch/controller input on mobile.
