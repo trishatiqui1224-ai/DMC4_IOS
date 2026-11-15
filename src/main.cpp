@@ -63,10 +63,11 @@ class Dmc4App final : public rex::ReXApp {
       config.log_dir = rex::filesystem::GetUserFolder() / "dmc4" / "logs";
     }
 
-    // Immediate flush so crash logs on iOS are never lost in RAM buffers
-    config.flush_level = spdlog::level::trace;
+    // Preserve fatal diagnostics without flushing for every pipeline log.
+    config.flush_level = spdlog::level::err;
     if (opts.debug_logging) {
       config.default_level = spdlog::level::debug;
+      config.flush_level = spdlog::level::trace;
     }
   }
 
@@ -83,7 +84,8 @@ class Dmc4App final : public rex::ReXApp {
 
     // Performance optimizations for Apple Silicon / iOS
     rex::cvar::SetFlagByName("native_2x_msaa", opts.msaa ? "true" : "false");
-    rex::cvar::SetFlagByName("async_shader_compilation", "true");
+    // Placeholder draws can leave an offscreen target incomplete for later passes.
+    rex::cvar::SetFlagByName("async_shader_compilation", "false");
     rex::cvar::SetFlagByName("readback_memexport_fast", "true");
     rex::cvar::SetFlagByName("readback_resolve", "none");
     rex::cvar::SetFlagByName("vulkan_sparse_shared_memory", "true");

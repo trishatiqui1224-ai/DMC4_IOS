@@ -16,3 +16,5 @@
 # Indirect guest call observed during gameplay scene transition / controller poll.
 0x821409F0 = {}
 0x82140A10 = {}
+# Indirect call while loading after the opening cutscenes on iOS.
+0x8286E388 = {}

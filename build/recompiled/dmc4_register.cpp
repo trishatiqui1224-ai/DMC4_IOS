@@ -25190,6 +25190,7 @@ void dmc4_RegisterFunctions(rex::runtime::IModuleRegistrar* registrar) {
   registrar->SetFunction(0x8286E288, sub_8286E288);
   registrar->SetFunction(0x8286E2C0, sub_8286E2C0);
   registrar->SetFunction(0x8286E348, sub_8286E348);
+  registrar->SetFunction(0x8286E388, sub_8286E388);
   registrar->SetFunction(0x8286E3B8, sub_8286E3B8);
   registrar->SetFunction(0x8286E4B0, sub_8286E4B0);
   registrar->SetFunction(0x8286E510, sub_8286E510);
