@@ -7,6 +7,25 @@ from pathlib import Path
 import struct
 
 
+def archive_entries(path):
+    size = path.stat().st_size
+    with path.open("rb") as stream:
+        header = stream.read(8)
+        if len(header) != 8 or header[:6] != b"\0CRA\0\x11":
+            raise ValueError("Expected an Xbox 360 MT Framework ARC v0x11")
+        count, = struct.unpack_from(">H", header, 6)
+        table = stream.read(count * 80)
+    if len(table) != count * 80:
+        raise ValueError("Truncated ARC entry table")
+    for index in range(count):
+        entry = index * 80
+        name = table[entry:entry + 64].split(b"\0", 1)[0].decode("ascii", errors="replace")
+        kind, packed, size_field, offset = struct.unpack_from(">4I", table, entry + 64)
+        if offset < 8 + len(table) or offset + packed > size:
+            raise ValueError(f"{name}: entry is outside the archive")
+        yield name, kind, packed, size_field, offset
+
+
 def decode_archive(path, decompress):
     archive = path.read_bytes()
     if len(archive) < 8 or archive[:6] != b"\0CRA\0\x11":
@@ -229,7 +248,29 @@ def main():
                 ctypes.c_uint32, ctypes.c_void_p, ctypes.c_size_t,
             ]
             decompress.restype = ctypes.c_int
-            bundles = list(decode_archive(args.archive, decompress))
+            if args.archive.is_dir():
+                archives = sorted(args.archive.rglob("*.arc"))
+                bundles = []
+                texture_count = 0
+                entry_count = 0
+                failures = []
+                for archive in archives:
+                    try:
+                        entries = list(archive_entries(archive))
+                        entry_count += len(entries)
+                        texture_count += sum(kind == 0x3CAD8076 for _, kind, *_ in entries)
+                        if any(kind == 0x4E32817C for _, kind, *_ in entries):
+                            bundles.extend((f"{archive.relative_to(args.archive)}::{name}", data)
+                                           for name, data in decode_archive(archive, decompress))
+                    except (OSError, ValueError) as error:
+                        failures.append(f"{archive.relative_to(args.archive)}: {error}")
+                print(f"Scanned {len(archives)} archives, {entry_count} entries, "
+                      f"{texture_count} texture entries, {len(failures)} archive failures.")
+                for failure in failures:
+                    print(failure)
+            else:
+                bundles = list(decode_archive(args.archive, decompress))
+                failures = []
         if not bundles:
             raise ValueError("No XFB shader bundles found")
     except (OSError, ValueError, AttributeError) as error:
@@ -271,6 +312,8 @@ def main():
             _compare_dumps(args.compare_dumps, archive_list, args.xex)
         except (OSError, ValueError) as error:
             parser.exit(1, f"{error}\n")
+    if failures:
+        parser.exit(1, "Archive scan completed with errors.\n")
 
 
 if __name__ == "__main__":

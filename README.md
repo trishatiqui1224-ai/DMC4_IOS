@@ -30,6 +30,10 @@ Launch `build/desktop/dmc4.exe` with `--gpu_plugin xenos` and `--game_data_root`
 
 ## Shader tools
 
+Pass the extracted game directory to `tools/verify_shaders.py` to scan every ARC table and decode every XFB shader entry found in those tables. The texture total counts ARC entries with in-bounds payloads. It does not verify texture decoding, guest references, or completeness against a disc image.
+
+On iOS, enable **Debug logging** before launching to save raw guest shader microcode and translated Vulkan shader binaries in `Documents/shader-dumps`. The Vulkan binaries are captured after Vulkan shader-module creation. A complete test still needs pipeline creation and visual checks across the game. Disable debug logging for performance comparisons.
+
 ```powershell
 python tools/verify_shaders.py "<game directory>/nativeXenon/system/shader.arc" --extract build/shaders/xenos --extract-ucode build/shaders/ucode
 python tools/verify_shaders.py "<game directory>/nativeXenon/system/shader.arc" --compare-dumps build/desktop/shader-dumps

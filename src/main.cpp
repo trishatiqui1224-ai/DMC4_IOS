@@ -124,7 +124,13 @@ class Dmc4App final : public rex::ReXApp {
 #endif
 
   void OnPostSetup() override {
-    const auto& directory = REXCVAR_GET(dmc4_shader_dump_dir);
+    std::string directory = REXCVAR_GET(dmc4_shader_dump_dir);
+#if REX_PLATFORM_IOS
+    const auto opts = dmc4::ios::GetLaunchOptions();
+    if (directory.empty() && opts.debug_logging && !opts.documents_dir.empty()) {
+      directory = (std::filesystem::path(opts.documents_dir) / "shader-dumps").string();
+    }
+#endif
     if (!directory.empty() && !rex::cvar::SetFlagByName("dump_shaders", directory)) {
       REXLOG_WARN("The active GPU plugin does not expose shader dumping.");
     }

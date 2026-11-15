@@ -394,7 +394,7 @@ private struct SettingsView: View {
             } header: {
                 Text("Diagnostics & Troubleshooting")
             } footer: {
-                Text("Logs are automatically written to Files > On My iPhone > Devil May Cry 4 > logs. Enable Debug logging if experiencing crashes or visual glitches.")
+                Text("Find logs in the Devil May Cry 4 folder in Files. Debug logging also captures shaders in shader-dumps and may slow the game.")
             }
         }
         .navigationTitle("Settings & Performance")

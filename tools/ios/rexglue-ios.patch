@@ -1667,3 +1667,18 @@ index f102b56..b9cdd1d 100644
  
  # Video provides the windowing/event layer; presenters create their own
  # D3D12/Vulkan surfaces from native handles, so SDL_RENDER stays off.
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 91ac08f..4927610 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -1246,6 +1246,10 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(SpirvShaderTranslator& transla
+     return false;
+   }
+ 
++  if (!REXCVAR_GET(dump_shaders).empty()) {
++    translation.Dump(REXCVAR_GET(dump_shaders), "vulkan.spv");
++  }
++
+   // TODO(Triang3l): Log that the shader has been successfully translated in
+   // common code.
+ 

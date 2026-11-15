@@ -20,3 +20,5 @@
 0x8286E388 = {}
 # Indirect call at the start of the first mission on iOS.
 0x8286D828 = {}
+# Indirect call reached after the Mission 1 opening sequence.
+0x82140A20 = {}
